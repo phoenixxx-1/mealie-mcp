@@ -7,44 +7,117 @@ A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server that e
 
 ## Features
 
-### Tools (31 total)
+### Tools (122 total)
 
 **Recipes**
-- `mealie_recipes_search` - Search recipes by name, tags, or categories
-- `mealie_recipes_get` - Get full recipe details including ingredients and instructions
+- `mealie_recipes_add_favorite` - Add a recipe to the current user's favorites
+- `mealie_recipes_bulk_categorize` - Add categories to multiple recipes at once
+- `mealie_recipes_bulk_delete` - Delete multiple recipes at once
+- `mealie_recipes_bulk_export` - Export multiple recipes at once
+- `mealie_recipes_bulk_tag` - Add tags to multiple recipes at once
+- `mealie_recipes_bulk_update_settings` - Update settings for multiple recipes at once
+- `mealie_recipes_create` - Create a new recipe in Mealie
+- `mealie_recipes_create_from_image` - Create a recipe from an image using AI (experimental)
+- `mealie_recipes_create_from_url` - Import a recipe from a URL by scraping it
+- `mealie_recipes_create_from_urls_bulk` - Import multiple recipes from URLs at once
+- `mealie_recipes_delete` - Delete a recipe from Mealie
+- `mealie_recipes_duplicate` - Duplicate an existing recipe
+- `mealie_recipes_get` - Get complete details for a specific recipe
+- `mealie_recipes_get_favorites` - Get all favorite recipes for the current user
+- `mealie_recipes_get_rating` - Get rating for a specific recipe
+- `mealie_recipes_get_ratings` - Get all ratings for the current user
+- `mealie_recipes_get_suggestions` - Get recipe suggestions based on preferences and history
 - `mealie_recipes_list` - List all recipes with pagination
-- `mealie_recipes_create` - Create a new recipe
-- `mealie_recipes_create_from_url` - Import recipe by scraping a URL
-- `mealie_recipes_update` - Update an existing recipe
-- `mealie_recipes_update_structured_ingredients` - Update recipe with structured ingredients from parser
-- `mealie_recipes_delete` - Delete a recipe
+- `mealie_recipes_remove_favorite` - Remove a recipe from the current user's favorites
+- `mealie_recipes_search` - Search for recipes in Mealie
+- `mealie_recipes_set_rating` - Set a rating (1-5 stars) for a recipe
+- `mealie_recipes_shared_access` - Access a shared recipe by token (public endpoint)
+- `mealie_recipes_shared_create` - Create a share link for a recipe
+- `mealie_recipes_shared_delete` - Delete a share link
+- `mealie_recipes_shared_get` - Get details of a shared recipe by ID
+- `mealie_recipes_shared_list` - List all shared recipe links
+- `mealie_recipes_update` - Update an existing recipe in Mealie
+- `mealie_recipes_update_last_made` - Update the last made timestamp for a recipe
+- `mealie_recipes_update_structured_ingredients` - Update a recipe with structured ingredients from parser output
+- `mealie_recipes_upload_image_from_url` - Upload an image to an existing recipe from a URL
+
+**Recipe Actions (automation)**
+- `mealie_recipe_actions_create` - Create a new recipe action
+- `mealie_recipe_actions_delete` - Delete a recipe action
+- `mealie_recipe_actions_get` - Get a specific recipe action by ID
+- `mealie_recipe_actions_list` - List all recipe actions with pagination
+- `mealie_recipe_actions_trigger` - Trigger a recipe action for a specific recipe
+- `mealie_recipe_actions_update` - Update an existing recipe action
+
+**Recipe Comments**
+- `mealie_comments_create` - Create a comment on a recipe
+- `mealie_comments_delete` - Delete a comment
+- `mealie_comments_get` - Get a comment by ID
+- `mealie_comments_get_recipe` - Get all comments for a recipe
+- `mealie_comments_update` - Update a comment
+
+**Recipe Timeline**
+- `mealie_timeline_create` - Create a new timeline event for a recipe
+- `mealie_timeline_delete` - Delete a timeline event
+- `mealie_timeline_get` - Get a specific timeline event by ID
+- `mealie_timeline_list` - List all recipe timeline events with pagination
+- `mealie_timeline_update` - Update an existing timeline event
+- `mealie_timeline_update_image` - Upload or update an image for a timeline event from a URL
 
 **Meal Planning**
+- `mealie_mealplans_create` - Create a new meal plan entry
+- `mealie_mealplans_delete` - Delete a meal plan entry
+- `mealie_mealplans_delete_range` - Delete all meal plans in a date range
+- `mealie_mealplans_get` - Get a specific meal plan entry by ID
+- `mealie_mealplans_get_date` - Get all meal plan entries for a specific date
 - `mealie_mealplans_list` - List meal plans for a date range
-- `mealie_mealplans_today` - Get today's meals
-- `mealie_mealplans_get` - Get specific meal plan entry
-- `mealie_mealplans_get_date` - Get meals for a specific date
-- `mealie_mealplans_create` - Create meal plan entry
-- `mealie_mealplans_update` - Update meal plan entry
-- `mealie_mealplans_delete` - Delete meal plan entry
-- `mealie_mealplans_random` - Get random meal suggestion
+- `mealie_mealplans_random` - Get a random meal suggestion from available recipes
+- `mealie_mealplans_search` - Search meal plans by recipe name, title, or text content
+- `mealie_mealplans_today` - Get today's meal plan entries
+- `mealie_mealplans_update` - Update an existing meal plan entry
+- `mealie_mealplans_update_batch` - Update multiple meal plans at once
+
+**Meal Plan Rules**
+- `mealie_mealplan_rules_create` - Create a new meal plan rule
+- `mealie_mealplan_rules_delete` - Delete a meal plan rule
+- `mealie_mealplan_rules_get` - Get a specific meal plan rule by ID
+- `mealie_mealplan_rules_list` - List all meal plan rules
+- `mealie_mealplan_rules_update` - Update an existing meal plan rule
 
 **Shopping Lists**
+- `mealie_shopping_add_recipe` - Add all ingredients from a recipe to a shopping list
+- `mealie_shopping_clear_checked` - Remove all checked items from a shopping list
+- `mealie_shopping_delete_recipe_from_list` - Remove recipe ingredients from a shopping list
+- `mealie_shopping_generate_from_mealplan` - Generate a shopping list from meal plan entries
+- `mealie_shopping_items_add` - Add an item to a shopping list
+- `mealie_shopping_items_add_bulk` - Add multiple items to a shopping list at once
+- `mealie_shopping_items_check` - Mark a shopping list item as checked or unchecked
+- `mealie_shopping_items_delete` - Remove an item from a shopping list
+- `mealie_shopping_lists_create` - Create a new shopping list
+- `mealie_shopping_lists_delete` - Delete a shopping list
+- `mealie_shopping_lists_get` - Get a specific shopping list with all items
 - `mealie_shopping_lists_list` - List all shopping lists
-- `mealie_shopping_lists_get` - Get shopping list with items
-- `mealie_shopping_lists_create` - Create new shopping list
-- `mealie_shopping_lists_delete` - Delete shopping list
-- `mealie_shopping_items_add` - Add item to list
-- `mealie_shopping_items_add_bulk` - Add multiple items at once
-- `mealie_shopping_items_check` - Mark item checked/unchecked
-- `mealie_shopping_items_delete` - Remove item from list
-- `mealie_shopping_add_recipe` - Add recipe ingredients to list
-- `mealie_shopping_generate_from_mealplan` - Generate shopping list from meal plan
-- `mealie_shopping_clear_checked` - Clear all checked items
 
-**Ingredient Parsing**
-- `mealie_parser_ingredient` - Parse single ingredient string to structured format
-- `mealie_parser_ingredients_batch` - Parse multiple ingredient strings at once
+**Cookbooks**
+- `mealie_cookbooks_create` - Create a new cookbook
+- `mealie_cookbooks_delete` - Delete a cookbook
+- `mealie_cookbooks_get` - Get a cookbook by ID
+- `mealie_cookbooks_list` - List all cookbooks
+- `mealie_cookbooks_update` - Update a cookbook
+
+**Foods & Units**
+- `mealie_foods_create` - Create a new food
+- `mealie_foods_delete` - Delete a food
+- `mealie_foods_get` - Get a specific food by ID
+- `mealie_foods_list` - List all foods with pagination
+- `mealie_foods_merge` - Merge one food into another (combines usage across recipes)
+- `mealie_foods_update` - Update an existing food
+- `mealie_units_create` - Create a new unit
+- `mealie_units_delete` - Delete a unit
+- `mealie_units_get` - Get a specific unit by ID
+- `mealie_units_list` - List all units with pagination
+- `mealie_units_merge` - Merge one unit into another (combines usage across recipes)
+- `mealie_units_update` - Update an existing unit
 
 **Ingredient Aliases**
 
@@ -52,16 +125,48 @@ Aliases are alternate names the Mealie ingredient parser matches back to a food
 or unit, so a recipe calling for "scallions" resolves to your "green onion"
 food instead of creating a duplicate.
 
+- `mealie_foods_aliases_add` - Add one or more aliases to a food, keeping the existing ones
 - `mealie_foods_aliases_list` - List the aliases registered for a food
-- `mealie_foods_aliases_add` - Add aliases to a food, keeping existing ones
-- `mealie_foods_aliases_remove` - Remove aliases from a food
+- `mealie_foods_aliases_remove` - Remove one or more aliases from a food
+- `mealie_units_aliases_add` - Add one or more aliases to a unit, keeping the existing ones
 - `mealie_units_aliases_list` - List the aliases registered for a unit
-- `mealie_units_aliases_add` - Add aliases to a unit, keeping existing ones
-- `mealie_units_aliases_remove` - Remove aliases from a unit
+- `mealie_units_aliases_remove` - Remove one or more aliases from a unit
 
 `mealie_foods_create`, `mealie_foods_update`, `mealie_units_create` and
 `mealie_units_update` also accept an `aliases` list, which *replaces* the whole
-set. Use the add/remove tools for incremental changes.
+set. Use the add/remove tools above for incremental changes.
+
+**Organizers (categories, tags, tools)**
+- `mealie_categories_create` - Create a new category
+- `mealie_categories_delete` - Delete a category
+- `mealie_categories_get` - Get a category by ID
+- `mealie_categories_list` - List all categories
+- `mealie_categories_update` - Update a category
+- `mealie_tags_create` - Create a new tag
+- `mealie_tags_delete` - Delete a tag
+- `mealie_tags_get` - Get a tag by ID
+- `mealie_tags_list` - List all tags
+- `mealie_tags_update` - Update a tag
+- `mealie_tools_create` - Create a new kitchen tool
+- `mealie_tools_delete` - Delete a tool
+- `mealie_tools_get` - Get a kitchen tool by ID
+- `mealie_tools_list` - List all kitchen tools
+- `mealie_tools_update` - Update a tool
+
+**Webhooks**
+- `mealie_webhooks_create` - Create a new webhook
+- `mealie_webhooks_delete` - Delete a webhook
+- `mealie_webhooks_get` - Get a specific webhook by ID
+- `mealie_webhooks_list` - List all webhooks
+- `mealie_webhooks_test` - Test a webhook by sending a test notification
+- `mealie_webhooks_update` - Update an existing webhook
+
+**Ingredient Parsing**
+- `mealie_parser_ingredient` - Parse a single ingredient string to structured format
+- `mealie_parser_ingredients_batch` - Parse multiple ingredient strings to structured format
+
+**Utility**
+- `ping` - Test connectivity to the MCP server and Mealie instance
 
 ### Resources
 
