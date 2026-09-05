@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Added `linux/arm64` to the Docker image build, so the published image now works natively on Apple Silicon Macs and other ARM64 hosts
+- Added a QEMU setup step to the Docker workflow so the ARM64 image can be built on the x86 GitHub runner
+- Added a `PLATFORM` environment variable to `build.sh` for cross-building locally (e.g. `PLATFORM=linux/arm64 ./build.sh`)
 - Added event notifications management with 6 new MCP tools (Batch 2 - Phase 2.3)
 - Added `mealie_notifications_list` tool to list all event notifications with pagination
 - Added `mealie_notifications_create` tool to create Apprise-based notifications for Mealie events

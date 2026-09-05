@@ -71,11 +71,22 @@ A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server that e
 docker pull ghcr.io/mdlopresti/mealie-mcp:latest
 ```
 
+The published image is multi-architecture (`linux/amd64` and `linux/arm64`),
+so the same tag works on x86 servers and on Apple Silicon Macs. Docker picks
+the matching architecture automatically.
+
 **Option B: Build from source**
 ```bash
 git clone https://github.com/mdlopresti/mealie-mcp.git
 cd mealie-mcp
 docker build -t mealie-mcp:latest .
+```
+
+`build.sh` builds for the host architecture by default. Set `PLATFORM` to
+cross-build:
+
+```bash
+PLATFORM=linux/arm64 ./build.sh
 ```
 
 ### 2. Get Your API Token
