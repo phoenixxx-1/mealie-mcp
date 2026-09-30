@@ -1761,17 +1761,35 @@ class MealieClient:
     # Organizers Management (Categories, Tags, Tools)
     # -------------------------------------------------------------------------
 
-    def list_categories(self) -> list[Dict[str, Any]]:
-        """List all categories."""
-        return self.get("/api/organizers/categories")
+    def list_categories(self) -> Dict[str, Any]:
+        """List all categories.
 
-    def list_tags(self) -> list[Dict[str, Any]]:
-        """List all tags."""
-        return self.get("/api/organizers/tags")
+        The endpoint is paginated with a default page size of 50, so
+        ``perPage=-1`` (Mealie's "return everything" value) is sent to get
+        the complete list in one response. Returns the pagination envelope
+        with all categories under ``items``.
+        """
+        return self.get("/api/organizers/categories", params={"perPage": -1})
 
-    def list_tools(self) -> list[Dict[str, Any]]:
-        """List all tools."""
-        return self.get("/api/organizers/tools")
+    def list_tags(self) -> Dict[str, Any]:
+        """List all tags.
+
+        The endpoint is paginated with a default page size of 50, so
+        ``perPage=-1`` (Mealie's "return everything" value) is sent to get
+        the complete list in one response. Returns the pagination envelope
+        with all tags under ``items``.
+        """
+        return self.get("/api/organizers/tags", params={"perPage": -1})
+
+    def list_tools(self) -> Dict[str, Any]:
+        """List all tools.
+
+        The endpoint is paginated with a default page size of 50, so
+        ``perPage=-1`` (Mealie's "return everything" value) is sent to get
+        the complete list in one response. Returns the pagination envelope
+        with all tools under ``items``.
+        """
+        return self.get("/api/organizers/tools", params={"perPage": -1})
 
     def create_category(self, name: str) -> Dict[str, Any]:
         """Create a new category."""

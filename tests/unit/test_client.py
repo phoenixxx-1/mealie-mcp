@@ -961,6 +961,49 @@ class TestMealieClientOrganizers:
 
         assert len(result) == 1
 
+    @respx.mock
+    def test_list_tags_requests_every_page(self):
+        """list_tags must send perPage=-1; the endpoint defaults to 50 per page."""
+        route = respx.get(
+            "https://test.example.com/api/organizers/tags",
+            params={"perPage": "-1"}
+        ).mock(return_value=Response(200, json={
+            "items": [build_tag(name=f"tag-{i}") for i in range(77)],
+            "total": 77, "page": 1, "perPage": -1,
+        }))
+
+        client = MealieClient("https://test.example.com", "token")
+        result = client.list_tags()
+
+        assert route.called
+        assert len(result["items"]) == 77
+
+    @respx.mock
+    def test_list_categories_requests_every_page(self):
+        """list_categories must send perPage=-1."""
+        route = respx.get(
+            "https://test.example.com/api/organizers/categories",
+            params={"perPage": "-1"}
+        ).mock(return_value=Response(200, json={"items": [], "total": 0}))
+
+        client = MealieClient("https://test.example.com", "token")
+        client.list_categories()
+
+        assert route.called
+
+    @respx.mock
+    def test_list_tools_requests_every_page(self):
+        """list_tools must send perPage=-1."""
+        route = respx.get(
+            "https://test.example.com/api/organizers/tools",
+            params={"perPage": "-1"}
+        ).mock(return_value=Response(200, json={"items": [], "total": 0}))
+
+        client = MealieClient("https://test.example.com", "token")
+        client.list_tools()
+
+        assert route.called
+
 
 # =============================================================================
 # 12. Cookbooks Methods Tests (3 tests)
