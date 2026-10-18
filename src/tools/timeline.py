@@ -12,11 +12,11 @@ from typing import Optional
 
 # Handle imports for both module usage and standalone execution
 try:
-    from ..client import MealieClient, MealieAPIError
+    from ..client import MealieClient, MealieAPIError, decode_image_base64, download_image, redact_url
 except ImportError:
     # Add parent directory to path for standalone execution
     sys.path.insert(0, str(Path(__file__).parent.parent))
-    from client import MealieClient, MealieAPIError
+    from client import MealieClient, MealieAPIError, decode_image_base64, download_image, redact_url
 
 
 def timeline_list(
@@ -264,55 +264,70 @@ def timeline_update_image(
     event_id: str,
     image_url: str,
 ) -> str:
-    """Upload or update an image for a timeline event from a URL.
+    """Download an image from a URL and attach it to a timeline event.
 
-    Downloads an image from the provided URL and uploads it to the specified
-    timeline event. The image will be automatically resized and optimized by Mealie.
+    Sets the event's photo, replacing any it had. It does NOT change the
+    recipe's main image. The download must be a JPEG, PNG, WebP, HEIC or AVIF
+    of at most 10 MB; an HTML page, a 404 or anything else is an error and
+    nothing is uploaded. Errors show the URL with credentials, query values and
+    Telegram bot tokens redacted.
 
     Args:
         event_id: Timeline event ID (UUID)
-        image_url: Full URL of the image to download and upload
+        image_url: http(s) URL of the image
 
     Returns:
         JSON string with upload confirmation or error details
     """
     try:
-        import httpx
-
+        image_data, _, _ = download_image(image_url)
         with MealieClient() as client:
-            # Download image from URL
-            with httpx.Client() as http_client:
-                img_response = http_client.get(image_url, follow_redirects=True)
-                img_response.raise_for_status()
-                image_data = img_response.content
-
-            # Determine extension from content-type or URL
-            content_type = img_response.headers.get("content-type", "")
-            if "jpeg" in content_type or "jpg" in content_type:
-                extension = "jpg"
-            elif "png" in content_type:
-                extension = "png"
-            elif "webp" in content_type:
-                extension = "webp"
-            else:
-                # Fallback to URL extension
-                extension = image_url.split(".")[-1].lower()
-                if extension not in ["jpg", "jpeg", "png", "webp"]:
-                    extension = "jpg"  # Default
-
-            # Upload to Mealie
-            response = client.update_timeline_event_image(
-                event_id=event_id,
-                image_data=image_data,
-                extension=extension,
-            )
-
+            result = client.update_timeline_event_image(event_id, image_data)
             return json.dumps({
                 "success": True,
-                "message": f"Image uploaded successfully to event {event_id}",
-                "image_url": image_url,
-                "extension": extension,
-                "event_id": event_id
+                "message": f"Image attached to timeline event {event_id}",
+                "image_url": redact_url(image_url),
+                **result,
+            }, indent=2)
+
+    except MealieAPIError as e:
+        return json.dumps({
+            "error": str(e).replace(image_url, redact_url(image_url)),
+            "status_code": e.status_code,
+            "response_body": e.response_body
+        }, indent=2)
+    except ValueError as e:
+        return json.dumps({"error": str(e)}, indent=2)
+    except Exception as e:
+        return json.dumps({
+            "error": f"Unexpected error: {str(e).replace(image_url, redact_url(image_url))}"
+        }, indent=2)
+
+
+def timeline_image_upload(event_id: str, image_base64: str) -> str:
+    """Upload image bytes (base64) as a timeline event's photo.
+
+    Sets the event's photo, replacing any it had. It does NOT change the
+    recipe's main image. The format is detected from the image's own bytes
+    (JPEG, PNG, WebP, HEIC or AVIF, at most 10 MB decoded); anything else is
+    an error and nothing is uploaded.
+
+    Args:
+        event_id: Timeline event ID (UUID)
+        image_base64: The image as standard base64, optionally with a
+            ``data:image/...;base64,`` prefix
+
+    Returns:
+        JSON string with upload confirmation or error details
+    """
+    try:
+        image_data = decode_image_base64(image_base64)  # validate before any request
+        with MealieClient() as client:
+            result = client.update_timeline_event_image(event_id, image_data)
+            return json.dumps({
+                "success": True,
+                "message": f"Image attached to timeline event {event_id}",
+                **result,
             }, indent=2)
 
     except MealieAPIError as e:
@@ -321,5 +336,7 @@ def timeline_update_image(
             "status_code": e.status_code,
             "response_body": e.response_body
         }, indent=2)
+    except ValueError as e:
+        return json.dumps({"error": str(e)}, indent=2)
     except Exception as e:
         return json.dumps({"error": f"Unexpected error: {str(e)}"}, indent=2)
