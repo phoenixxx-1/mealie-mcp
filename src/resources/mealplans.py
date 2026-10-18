@@ -100,6 +100,8 @@ def get_current_mealplan() -> str:
                                     output.append(f"- **{recipe_name}** (`{recipe_slug}`)")
                                 else:
                                     output.append(f"- {recipe}")
+                            elif meal.get("title"):
+                                output.append(f"- {meal['title']}")
 
                             # Show note if present
                             note = meal.get("text")
@@ -124,6 +126,8 @@ def get_current_mealplan() -> str:
                                 output.append(f"- **{recipe_name}** (`{recipe_slug}`)")
                             else:
                                 output.append(f"- {recipe}")
+                        elif meal.get("title"):
+                            output.append(f"- {meal['title']}")
 
                         note = meal.get("text")
                         if note:

@@ -10,7 +10,9 @@ import json
 from datetime import date
 from unittest.mock import MagicMock, patch
 
-from src.client import mealplan_entries, mealplan_range_params
+import pytest
+
+from src.client import MealieAPIError, mealplan_entries, mealplan_range_params
 from src.resources.mealplans import get_current_mealplan
 from src.tools.mealplans import (
     mealplans_delete_range,
@@ -60,8 +62,19 @@ class TestHelpers:
     def test_entries_accept_a_bare_list_and_ignore_junk(self):
         assert mealplan_entries([DINNER, "x", None]) == [DINNER]
         assert mealplan_entries(envelope()) == []
-        assert mealplan_entries({"items": None}) == []
-        assert mealplan_entries(None) == []
+
+    @pytest.mark.parametrize("body", [None, {"detail": "proxy says no"}, {"items": None}, "ok"])
+    def test_unexpected_body_is_an_error_not_an_empty_range(self, body):
+        with pytest.raises(MealieAPIError, match="Unexpected response"):
+            mealplan_entries(body)
+
+    def test_get_by_date_reports_an_unexpected_body(self):
+        mock = mock_client({"detail": "proxy says no"})
+        with patch("src.tools.mealplans.MealieClient", return_value=mock):
+            data = json.loads(mealplans_get_by_date(TODAY))
+
+        assert "Unexpected response" in data["error"]
+        assert "count" not in data
 
 
 class TestGetByDate:
@@ -124,11 +137,13 @@ class TestSearchAndDeleteRange:
 class TestOtherReaders:
 
     def test_current_week_resource_lists_the_meals(self):
-        mock = mock_client(envelope(DINNER))
+        mock = mock_client(envelope(DINNER, LUNCH_NOTE))
         with patch("src.resources.mealplans.MealieClient", return_value=mock):
             text = get_current_mealplan()
 
         assert "Pasta al pomodoro" in text
+        assert "- Leftovers" in text  # a title-only entry still shows up
+        assert mock.get.call_args.kwargs["params"]["perPage"] == -1
 
     def test_shopping_from_mealplan_finds_the_recipes(self):
         mock = mock_client(envelope(DINNER, LUNCH_NOTE))
@@ -136,5 +151,5 @@ class TestOtherReaders:
         with patch("src.tools.shopping.MealieClient", return_value=mock):
             data = json.loads(shopping_generate_from_mealplan(start_date=TODAY, end_date=TODAY))
 
-        assert "No meal plans found" not in data.get("error", "")
-        assert "No recipes found" not in data.get("error", "")
+        assert data.get("success") is True, data
+        assert mock.get.call_args_list[0].kwargs["params"]["perPage"] == -1

@@ -111,13 +111,20 @@ def mealplan_entries(response: Any) -> list[Dict[str, Any]]:
 
     Mealie returns a pagination envelope with the entries under ``items``;
     a bare list is accepted too.
+
+    Raises:
+        MealieAPIError: If the body is neither, so an odd response (from a
+            proxy, say) isn't mistaken for an empty date range
     """
-    if isinstance(response, dict):
-        items = response.get("items")
-        return [entry for entry in items if isinstance(entry, dict)] if isinstance(items, list) else []
+    if isinstance(response, dict) and isinstance(response.get("items"), list):
+        return [entry for entry in response["items"] if isinstance(entry, dict)]
     if isinstance(response, list):
         return [entry for entry in response if isinstance(entry, dict)]
-    return []
+    raise MealieAPIError(
+        "Unexpected response from /api/households/mealplans: expected a page of "
+        f"entries with 'items', got {type(response).__name__}",
+        response_body=json.dumps(response)[:500] if response is not None else None,
+    )
 
 
 # Keys a substitution entry may use. ``food`` mirrors the key an ingredient
