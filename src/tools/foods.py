@@ -5,6 +5,7 @@ Provides tools for managing foods and units in Mealie, including:
 - List, get, update, delete operations
 - Merge duplicate foods/units
 - Manage aliases (alternate names the ingredient parser recognizes)
+- Manage substitutions (standing "may be replaced by" options on a food)
 """
 
 import json
@@ -14,11 +15,13 @@ from typing import Optional
 
 # Handle imports for both module usage and standalone execution
 try:
-    from ..client import MealieClient, MealieAPIError, alias_names
+    from ..client import MealieClient, MealieAPIError, alias_names, substitution_summary
 except ImportError:
     # Add parent directory to path for standalone execution
     sys.path.insert(0, str(Path(__file__).parent.parent))
-    from client import MealieClient, MealieAPIError, alias_names
+    from client import MealieClient, MealieAPIError, alias_names, substitution_summary
+
+
 
 
 # -----------------------------------------------------------------------------
@@ -59,7 +62,8 @@ def foods_create(
     name: str,
     description: Optional[str] = None,
     label_id: Optional[str] = None,
-    aliases: Optional[list[str]] = None
+    aliases: Optional[list[str]] = None,
+    substitutions: Optional[list] = None
 ) -> str:
     """Create a new food.
 
@@ -69,13 +73,17 @@ def foods_create(
         label_id: Optional label ID (UUID) to assign
         aliases: Optional alternate names the ingredient parser should match to
             this food (e.g. ["scallions", "spring onions"] for "green onion")
+        substitutions: Optional standing substitutions for this food (e.g.
+            [{"substitute_food": "vegan block", "note": "for a dairy-free bake"}]).
+            Each entry is a substitute food name, or a dict with
+            substitute_food_id or substitute_food plus an optional note.
 
     Returns:
         JSON string with created food details
     """
     try:
         with MealieClient() as client:
-            result = client.create_food(name, description, label_id, aliases)
+            result = client.create_food(name, description, label_id, aliases, substitutions)
             return json.dumps({
                 "success": True,
                 "message": "Food created successfully",
@@ -89,6 +97,8 @@ def foods_create(
             "response_body": e.response_body
         }
         return json.dumps(error_result, indent=2)
+    except ValueError as e:
+        return json.dumps({"error": str(e)}, indent=2)
     except Exception as e:
         error_result = {
             "error": f"Unexpected error: {str(e)}"
@@ -129,7 +139,8 @@ def foods_update(
     name: Optional[str] = None,
     description: Optional[str] = None,
     label_id: Optional[str] = None,
-    aliases: Optional[list[str]] = None
+    aliases: Optional[list[str]] = None,
+    substitutions: Optional[list] = None
 ) -> str:
     """Update an existing food.
 
@@ -142,13 +153,19 @@ def foods_update(
             Pass an empty list to clear them, or omit to leave them alone.
             To add or drop individual aliases use foods_aliases_add /
             foods_aliases_remove instead.
+        substitutions: Replacement substitution list, overwriting any existing
+            substitutions. Pass an empty list to clear them, or omit to leave
+            them alone. To add or drop individual substitutions use
+            foods_substitutions_add / foods_substitutions_remove instead.
 
     Returns:
         JSON string with updated food details
     """
     try:
         with MealieClient() as client:
-            food = client.update_food(food_id, name, description, label_id, aliases)
+            food = client.update_food(
+                food_id, name, description, label_id, aliases, substitutions
+            )
             return json.dumps({
                 "success": True,
                 "message": "Food updated successfully",
@@ -162,6 +179,8 @@ def foods_update(
             "response_body": e.response_body
         }
         return json.dumps(error_result, indent=2)
+    except ValueError as e:
+        return json.dumps({"error": str(e)}, indent=2)
     except Exception as e:
         error_result = {
             "error": f"Unexpected error: {str(e)}"
@@ -664,6 +683,97 @@ def units_aliases_remove(unit_id: str, aliases: list[str]) -> str:
             "response_body": e.response_body
         }
         return json.dumps(error_result, indent=2)
+    except Exception as e:
+        error_result = {
+            "error": f"Unexpected error: {str(e)}"
+        }
+        return json.dumps(error_result, indent=2)
+
+
+
+# -----------------------------------------------------------------------------
+# Substitution Management
+# -----------------------------------------------------------------------------
+
+def _substitutions_result(food: dict, message: str) -> str:
+    return json.dumps({
+        "success": True,
+        "message": message,
+        "food_id": food.get("id"),
+        "name": food.get("name"),
+        "substitutions": substitution_summary(food)
+    }, indent=2)
+
+
+def foods_substitutions_add(food_id: str, substitutions: list) -> str:
+    """Add one or more standing substitutions to a food, keeping the existing ones.
+
+    Each entry is a substitute food name, or a dict with substitute_food_id or
+    substitute_food (a name) plus an optional note; a note on its own is
+    allowed too. Substitute food names must match an existing food name,
+    plural name or alias. A substitute the food already has keeps its place,
+    and its note is replaced only if a new one is given, so this is safe to
+    call repeatedly.
+
+    Args:
+        food_id: The food's ID
+        substitutions: Substitutions to add
+
+    Returns:
+        JSON string with the resulting substitution list
+    """
+    try:
+        with MealieClient() as client:
+            food = client.add_food_substitutions(food_id, substitutions)
+            return _substitutions_result(
+                food, "Food substitutions updated (existing substitutions preserved)"
+            )
+
+    except MealieAPIError as e:
+        error_result = {
+            "error": str(e),
+            "status_code": e.status_code,
+            "response_body": e.response_body
+        }
+        return json.dumps(error_result, indent=2)
+    except ValueError as e:
+        return json.dumps({"error": str(e)}, indent=2)
+    except Exception as e:
+        error_result = {
+            "error": f"Unexpected error: {str(e)}"
+        }
+        return json.dumps(error_result, indent=2)
+
+
+def foods_substitutions_remove(food_id: str, substitutions: list) -> str:
+    """Remove one or more standing substitutions from a food.
+
+    An entry naming a substitute food (by substitute_food_id, or by name,
+    case-insensitively) removes that food's substitution whatever its note.
+    A note-only entry removes note-only substitutions with that note.
+    Entries that match nothing are ignored.
+
+    Args:
+        food_id: The food's ID
+        substitutions: Substitutions to remove
+
+    Returns:
+        JSON string with the remaining substitution list
+    """
+    try:
+        with MealieClient() as client:
+            food = client.remove_food_substitutions(food_id, substitutions)
+            return _substitutions_result(food, "Food substitutions updated")
+
+    except MealieAPIError as e:
+        error_result = {
+            "error": str(e),
+            "status_code": e.status_code,
+            "response_body": e.response_body
+        }
+        return json.dumps(error_result, indent=2)
+    except ValueError as e:
+        return json.dumps({"error": str(e)}, indent=2)
     except Exception as e:
         error_result = {
             "error": f"Unexpected error: {str(e)}"

@@ -65,7 +65,7 @@ class TestFoods:
         assert data["success"] is True
         assert "food" in data
         assert data["message"] == "Food created successfully"
-        mock_client.create_food.assert_called_once_with("Flour", "All-purpose flour", None, None)
+        mock_client.create_food.assert_called_once_with("Flour", "All-purpose flour", None, None, None)
 
     def test_foods_get(self):
         """Test getting a food."""

@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Added ingredient substitution support for recipe ingredient lines and foods (Mealie 3.x)
+- Added `mealie_foods_substitutions_add` tool to add standing substitutions to a food while keeping existing ones
+- Added `mealie_foods_substitutions_remove` tool to remove standing substitutions from a food
+- Added an optional `substitutions` parameter to `mealie_foods_create` and `mealie_foods_update` (replaces the full substitution set; `[]` clears it)
+- Added per-line `substitutions` to `mealie_recipes_update_structured_ingredients`; substitute foods can be given by ID or by name, names resolve against food names, plural names and aliases, and `create_missing_foods` applies to them
+- Added `saved_substitutions` to the `mealie_recipes_update_structured_ingredients` response, and `unmatched_substitute_foods` to its `create_missing_foods=False` error
+- Added `add_food_substitutions`, `remove_food_substitutions`, `list_all_foods`, `get_food_name_index` and `substitution_payload` methods to MealieClient, plus `normalize_substitutions`, `resolve_substitutions`, `food_name_index` and `substitution_summary` helpers
+- Added 31 unit tests covering substitution validation, name resolution, the client read-modify-write methods (including that invalid input is rejected before any request), and the tool wrappers
 - Added ingredient alias management with 6 new MCP tools
 - Added `mealie_foods_aliases_list` tool to list the aliases registered for a food
 - Added `mealie_foods_aliases_add` tool to add aliases to a food while keeping existing ones
@@ -71,6 +79,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added support for optional expiration dates when creating share links
 
 ### Fixed
+- Fixed `mealie_recipes_update_structured_ingredients` silently dropping a `substitutions` list passed on an ingredient line
 - Fixed `list_tags`, `list_categories` and `list_tools` returning only the first 50 entries. The organizer endpoints are paginated with a default page size of 50 and the client sent no paging parameters, so any tag beyond the first page looked missing and `mealie_tags_create` then failed with a 409 because it already existed. The client now sends `perPage=-1` to fetch the full list
 - Fixed `update_unit` sending a partial `PATCH` to `/api/units/{id}`, which the Mealie API does not implement; it now fetches the unit and `PUT`s the merged object, so fields that are not passed are no longer dropped
 
