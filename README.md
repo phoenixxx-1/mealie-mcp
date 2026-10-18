@@ -322,7 +322,11 @@ must be inside one of those folders; `..` tricks, a sibling folder with a
 similar name, or a symlink pointing elsewhere are refused. The file must be a
 regular file of at most 10 MB, and its format is read from its bytes, not its
 name. The server only ever reads the file. Folders in `MEALIE_MCP_IMAGE_DIRS`
-that don't exist are ignored.
+that don't exist are ignored, and `/` is refused.
+
+List only folders that just you and your agent can write to. Anyone who can
+write there could, for example, add a hard link to a photo stored elsewhere,
+and that can't be told apart from a file that really lives in the folder.
 
 ### 4. Test the Connection
 

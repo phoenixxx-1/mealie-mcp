@@ -98,6 +98,29 @@ class TestConfig:
         assert read_image_path(str(second / "b.png")) == PNG
 
 
+    def test_root_slash_is_refused(self, monkeypatch):
+        monkeypatch.setenv(IMAGE_DIRS_ENV, "/")
+        assert allowed_image_dirs() == []
+        data, client_class = upload(image_path="/etc/hosts")
+        assert "no usable folder in MEALIE_MCP_IMAGE_DIRS" in data["error"]
+        client_class.assert_not_called()
+
+    def test_set_but_missing_says_so_and_is_not_remembered(self, tmp_path, monkeypatch):
+        folder = tmp_path / "later"
+        monkeypatch.setenv(IMAGE_DIRS_ENV, str(folder))
+        with pytest.raises(ValueError, match="no usable folder in MEALIE_MCP_IMAGE_DIRS"):
+            read_image_path(str(folder / "a.jpg"))
+
+        folder.mkdir()  # e.g. the agent downloads its first photo after startup
+        (folder / "a.jpg").write_bytes(JPEG)
+        assert read_image_path(str(folder / "a.jpg")) == JPEG
+
+    def test_a_file_listed_as_a_folder_is_ignored(self, tmp_path, monkeypatch):
+        (tmp_path / "not_a_dir").write_bytes(JPEG)
+        monkeypatch.setenv(IMAGE_DIRS_ENV, str(tmp_path / "not_a_dir"))
+        assert allowed_image_dirs() == []
+
+
 class TestValidPath:
 
     def test_recipe_upload_from_path(self, images):
@@ -213,6 +236,14 @@ class TestRejectedPaths:
         assert "exactly one of image_path or image_base64 (neither was given)" in data["error"]
         client_class.assert_not_called()
 
+    def test_long_paths_are_cut_short_in_errors(self, images):
+        data = self._rejects("/" + "x" * 5000, "outside allowed folders")
+        assert len(data["error"]) < 300
+
+    def test_control_characters_are_escaped_in_errors(self, images):
+        data = self._rejects("/elsewhere/a\nFAKE LOG LINE.jpg", "outside allowed folders")
+        assert "\n" not in data["error"]
+
     def test_null_byte(self, images):
         self._rejects(f"{images}/img_1.jpg\x00.png", "must be an absolute path")
 
@@ -247,6 +278,28 @@ class TestRaceSafety:
         monkeypatch.setattr(client_module.os.path, "realpath", swap_then_resolve)
         with pytest.raises(ValueError, match="can't be opened"):
             read_image_path(str(photo))
+
+    def test_directory_swapped_for_a_symlink_mid_path(self, images, tmp_path, monkeypatch):
+        """A folder on the path swapped for a symlink after realpath can't redirect the read."""
+        sub = images / "sub"
+        sub.mkdir()
+        (sub / "photo.jpg").write_bytes(JPEG)
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "photo.jpg").write_bytes(PNG)  # an image, so the format check wouldn't catch it
+        real_realpath = os.path.realpath
+
+        def swap_then_resolve(path, *args, **kwargs):
+            resolved = real_realpath(path, *args, **kwargs)
+            if resolved == real_realpath(sub / "photo.jpg"):
+                (sub / "photo.jpg").unlink()
+                sub.rmdir()
+                sub.symlink_to(outside)
+            return resolved
+
+        monkeypatch.setattr(client_module.os.path, "realpath", swap_then_resolve)
+        with pytest.raises(ValueError, match="can't be opened"):
+            read_image_path(str(sub / "photo.jpg"))
 
     def test_reads_at_most_the_cap_plus_one(self, images, monkeypatch):
         monkeypatch.setattr(client_module, "IMAGE_MAX_BYTES", 32)
