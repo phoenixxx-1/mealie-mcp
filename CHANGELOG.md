@@ -80,6 +80,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added support for optional expiration dates when creating share links
 
 ### Fixed
+- Fixed substitution entries with an unrecognised key (such as `food`, or a misspelt `substitute_food`) being saved as note-only without an error. `food` is now accepted as an alias for `substitute_food`, any other unknown key is rejected, and keys that point at different foods are an error
+- Fixed `substitutions` being undiscoverable on `mealie_recipes_update_structured_ingredients`: the `parsed_ingredients` items now have a schema that lists `ingredient` and `substitutions`, and every substitutions parameter declares its entry keys
 - Fixed `mealie_recipes_update_structured_ingredients` silently dropping a `substitutions` list passed on an ingredient line
 - Fixed `list_tags`, `list_categories` and `list_tools` returning only the first 50 entries. The organizer endpoints are paginated with a default page size of 50 and the client sent no paging parameters, so any tag beyond the first page looked missing and `mealie_tags_create` then failed with a 409 because it already existed. The client now sends `perPage=-1` to fetch the full list
 - Fixed `update_unit` sending a partial `PATCH` to `/api/units/{id}`, which the Mealie API does not implement; it now fetches the unit and `PUT`s the merged object, so fields that are not passed are no longer dropped

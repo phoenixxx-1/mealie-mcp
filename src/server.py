@@ -8,7 +8,10 @@ Provides tools and resources for recipe management, meal planning, and shopping 
 import os
 import sys
 from pathlib import Path
-from typing import Any, Optional
+from typing import Annotated, Any, Optional
+
+from pydantic import ConfigDict, Field, with_config
+from typing_extensions import TypedDict
 
 # Ensure the src directory is in the path for imports
 sys.path.insert(0, str(Path(__file__).parent))
@@ -172,6 +175,59 @@ from resources.shopping import get_shopping_lists, get_shopping_list_detail
 
 # Create MCP server
 mcp = FastMCP("mealie")
+
+
+# =============================================================================
+# Shared argument schemas
+# =============================================================================
+
+_FoodRef = Optional[str | dict[str, Any]]
+
+
+@with_config(ConfigDict(extra="forbid"))
+class SubstitutionEntry(TypedDict, total=False):
+    """One "may be replaced by" option: a substitute food, a note, or both.
+
+    Unknown keys are rejected, so a misspelt key can't quietly turn a food
+    substitution into a note-only one.
+    """
+
+    substitute_food: Annotated[_FoodRef, Field(
+        description='Substitute food: a name (matched against food names, plural names '
+                    'and aliases) or {"id": ..., "name": ...}'
+    )]
+    substitute_food_id: Annotated[Optional[str], Field(description="Substitute food ID (UUID)")]
+    food: Annotated[_FoodRef, Field(description="Same as substitute_food")]
+    note: Annotated[Optional[str], Field(
+        description="Free-text note, e.g. a quantity or caveat. On its own it makes a note-only substitution"
+    )]
+    substituteFood: Annotated[_FoodRef, Field(
+        description="Mealie's read shape of substitute_food, accepted so reads can be passed back"
+    )]
+    substituteFoodId: Annotated[Optional[str], Field(
+        description="Mealie's read shape of substitute_food_id"
+    )]
+
+
+# A bare string is a substitute food name
+Substitutions = list[SubstitutionEntry | str]
+
+
+@with_config(ConfigDict(extra="allow"))
+class ParsedIngredientLine(TypedDict, total=False):
+    """A parser result ({input, confidence, ingredient}) or a bare ingredient.
+
+    Other keys, such as the parser's ``input`` and ``confidence`` or a bare
+    ingredient's ``quantity``/``unit``/``food``/``note``, are passed through.
+    """
+
+    ingredient: Annotated[Optional[dict[str, Any]], Field(
+        description="Structured ingredient from the parser: quantity, unit, food, note, display"
+    )]
+    substitutions: Annotated[Optional[Substitutions], Field(
+        description="Ingredient options for this line. Wins over a substitutions list inside "
+                    "'ingredient', since the parser always returns an empty one there"
+    )]
 
 
 # =============================================================================
@@ -369,7 +425,7 @@ def mealie_recipes_update(
 @mcp.tool()
 def mealie_recipes_update_structured_ingredients(
     slug: str,
-    parsed_ingredients: list[dict],
+    parsed_ingredients: list[ParsedIngredientLine],
     create_missing_foods: bool = True
 ) -> str:
     """Update a recipe with structured ingredients from parser output.
@@ -390,10 +446,12 @@ def mealie_recipes_update_structured_ingredients(
             - substitutions: optional list of ingredient options for this line, set on
               the ingredient or beside it on a parser result (beside it wins, since the
               parser already returns an empty list on the ingredient). Each entry is a
-              food name ("chopped tomatoes"), or a dict with `substitute_food_id` or
-              `substitute_food` (a name) plus an optional `note`, e.g.
+              food name ("chopped tomatoes"), or a dict with `substitute_food` (a name
+              or {"id", "name"}; `food` also works) or `substitute_food_id`, plus an
+              optional `note`, e.g.
               {"substitute_food": "vegan block", "note": "for a dairy-free version"}.
-              A note on its own is also allowed. Names are matched case-insensitively
+              A note on its own is also allowed. Unknown keys are an error. Names are
+              matched case-insensitively
               against existing food names, plural names and aliases. The whole
               ingredient list is replaced, so a line without substitutions is saved
               with none.
@@ -1326,7 +1384,7 @@ def mealie_foods_create(
     description: str = None,
     label_id: str = None,
     aliases: list[str] | None = None,
-    substitutions: list[dict | str] | None = None
+    substitutions: Substitutions | None = None
 ) -> str:
     """Create a new food.
 
@@ -1337,11 +1395,12 @@ def mealie_foods_create(
         aliases: Optional alternate names the ingredient parser should match to
             this food (e.g. ["scallions", "spring onions"] for "green onion")
         substitutions: Optional standing substitutions for this food. Each entry
-            is a substitute food name, or a dict with `substitute_food_id` or
-            `substitute_food` (a name) plus an optional `note`, e.g.
+            is a substitute food name, or a dict with `substitute_food` (a name or
+            {"id", "name"}; `food` also works) or `substitute_food_id`, plus an
+            optional `note`, e.g.
             [{"substitute_food": "vegan block", "note": "dairy-free"}]. A note on
-            its own is also allowed. Named substitute foods must already exist
-            (matched by name, plural name or alias).
+            its own is also allowed; unknown keys are an error. Named substitute
+            foods must already exist (matched by name, plural name or alias).
 
     Returns:
         JSON string with created food details
@@ -1376,7 +1435,7 @@ def mealie_foods_update(
     description: str | None = None,
     label_id: str | None = None,
     aliases: list[str] | None = None,
-    substitutions: list[dict | str] | None = None
+    substitutions: Substitutions | None = None
 ) -> str:
     """Update an existing food.
 
@@ -1606,7 +1665,7 @@ def mealie_foods_aliases_remove(food_id: str, aliases: list[str]) -> str:
 
 
 @mcp.tool()
-def mealie_foods_substitutions_add(food_id: str, substitutions: list[dict | str]) -> str:
+def mealie_foods_substitutions_add(food_id: str, substitutions: Substitutions) -> str:
     """Add one or more standing substitutions to a food, keeping the existing ones.
 
     A food's substitutions are the "may be replaced by" options Mealie offers
@@ -1616,8 +1675,9 @@ def mealie_foods_substitutions_add(food_id: str, substitutions: list[dict | str]
     Args:
         food_id: The food's ID
         substitutions: Substitutions to add. Each entry is a substitute food name,
-            or a dict with `substitute_food_id` or `substitute_food` (a name) plus
-            an optional `note`; a note on its own is also allowed. Named foods must
+            or a dict with `substitute_food` (a name or {"id", "name"}; `food` also
+            works) or `substitute_food_id`, plus an optional `note`; a note on its
+            own is also allowed, and unknown keys are an error. Named foods must
             already exist (matched by name, plural name or alias). A substitute the
             food already has keeps its place, and its note is replaced only if a
             new one is given, so this is safe to call repeatedly.
@@ -1630,17 +1690,17 @@ def mealie_foods_substitutions_add(food_id: str, substitutions: list[dict | str]
 
 
 @mcp.tool()
-def mealie_foods_substitutions_remove(food_id: str, substitutions: list[dict | str]) -> str:
+def mealie_foods_substitutions_remove(food_id: str, substitutions: Substitutions) -> str:
     """Remove one or more standing substitutions from a food.
 
     Args:
         food_id: The food's ID
         substitutions: Substitutions to remove. An entry naming a substitute food
-            (a name, or a dict with `substitute_food_id` or `substitute_food`)
-            removes that food's substitution whatever its note; names match
-            case-insensitively against food names, plural names and aliases. A note-only entry ({"note": "..."}) removes
-            note-only substitutions with that note. Entries that match nothing
-            are ignored.
+            (a name, or a dict with `substitute_food`, `food` or
+            `substitute_food_id`) removes that food's substitution whatever its
+            note; names match case-insensitively against food names, plural names
+            and aliases. A note-only entry ({"note": "..."}) removes note-only
+            substitutions with that note. Entries that match nothing are ignored.
 
     Returns:
         JSON string with the remaining substitution list
