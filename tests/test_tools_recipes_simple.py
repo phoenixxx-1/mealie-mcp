@@ -782,7 +782,7 @@ class TestRecipesUploadImage:
         mock_client = MagicMock()
         mock_client.__enter__ = MagicMock(return_value=mock_client)
         mock_client.__exit__ = MagicMock(return_value=None)
-        mock_client.upload_image_from_url.side_effect = MealieAPIError(
+        mock_client.upload_recipe_image_from_url.side_effect = MealieAPIError(
             "Upload failed", status_code=400, response_body="Bad image"
         )
 
@@ -794,6 +794,7 @@ class TestRecipesUploadImage:
 
         data = json.loads(result)
         assert "error" in data
+        assert data["status_code"] == 400
 
 
 class TestRecipesEdgeCases:

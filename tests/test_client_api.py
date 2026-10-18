@@ -163,15 +163,19 @@ class TestRecipeAPIs:
     @respx.mock
     def test_upload_recipe_image_from_url(self, mock_client):
         """Test upload recipe image from URL."""
-        # Mock image download
+        # Mock image download (real JPEG magic bytes; the format is checked)
         image_route = respx.get("https://example.com/image.jpg").mock(
-            return_value=Response(200, content=b"fake image data")
+            return_value=Response(200, content=b"\xff\xd8\xff\xe0" + b"\x00" * 32,
+                                  headers={"content-type": "image/jpeg"})
         )
-
-        # Mock image upload
+        # The recipe is read before and after, to confirm the image key changed
+        respx.get("https://test.mealie.example.com/api/recipes/test-recipe").mock(side_effect=[
+            Response(200, json={"slug": "test-recipe", "image": "old1"}),
+            Response(200, json={"slug": "test-recipe", "image": "new2"}),
+        ])
         upload_route = respx.put(
             "https://test.mealie.example.com/api/recipes/test-recipe/image"
-        ).mock(return_value=Response(200, json={"success": True}))
+        ).mock(return_value=Response(200, json={"image": "new2"}))
 
         result = mock_client.upload_recipe_image_from_url(
             "test-recipe",
@@ -180,6 +184,7 @@ class TestRecipeAPIs:
 
         assert image_route.called
         assert upload_route.called
+        assert result["image"] == "new2" and result["format"] == "jpg"
 
 
 class TestMealPlanAPIs:

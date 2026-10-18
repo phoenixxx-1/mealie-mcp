@@ -24,7 +24,9 @@ try:
         MealieClient,
         MealieAPIError,
         SUBSTITUTIONS_NOT_SAVED_WARNING,
+        decode_image_base64,
         normalize_substitutions,
+        redact_url,
         resolve_substitutions,
         substitution_summary,
         substitutions_need_lookup,
@@ -36,7 +38,9 @@ except ImportError:
         MealieClient,
         MealieAPIError,
         SUBSTITUTIONS_NOT_SAVED_WARNING,
+        decode_image_base64,
         normalize_substitutions,
+        redact_url,
         resolve_substitutions,
         substitution_summary,
         substitutions_need_lookup,
@@ -527,7 +531,6 @@ def recipes_update(
     tags: Optional[list[str]] = None,
     categories: Optional[list[str]] = None,
     org_url: Optional[str] = None,
-    image: Optional[str] = None,
 ) -> str:
     """Update an existing recipe in Mealie.
 
@@ -544,7 +547,6 @@ def recipes_update(
         tags: New list of tag names (ADDITIVE - adds to existing tags)
         categories: New list of category names (ADDITIVE - adds to existing categories)
         org_url: Original recipe URL
-        image: Recipe image identifier
 
     Returns:
         JSON string with updated recipe details
@@ -569,7 +571,9 @@ def recipes_update(
                 "prepTime": prep_time if prep_time is not None else recipe.get("prepTime"),
                 "cookTime": cook_time if cook_time is not None else recipe.get("cookTime"),
                 "orgURL": org_url if org_url is not None else recipe.get("orgURL"),
-                "image": image if image is not None else recipe.get("image"),
+                # Mealie manages the image key (a per-recipe cache-buster set on each
+                # upload), so it's always carried over; images change via the upload tools
+                "image": recipe.get("image"),
             }
 
             # Handle ingredients - replace if provided, keep existing otherwise
@@ -609,7 +613,7 @@ def recipes_update(
 
             # Update the recipe
             # Use PATCH for tag/category-only updates with full payload to avoid name validation issues
-            if (tags is not None or categories is not None) and all(x is None for x in [name, description, recipe_yield, total_time, prep_time, cook_time, ingredients, instructions, org_url, image]):
+            if (tags is not None or categories is not None) and all(x is None for x in [name, description, recipe_yield, total_time, prep_time, cook_time, ingredients, instructions, org_url]):
                 # Only updating tags/categories - use PATCH with full payload
                 client.patch(f"/api/recipes/{slug}", json=update_payload)
             else:
@@ -1350,32 +1354,73 @@ def recipes_create_from_image(image_data: str, extension: str = "jpg") -> str:
         return json.dumps(error_result, indent=2)
 
 
+def _image_upload_result(result: dict, message: str) -> str:
+    return json.dumps({"success": True, "message": message, **result}, indent=2)
+
+
 def recipes_upload_image_from_url(slug: str, image_url: str) -> str:
-    """Upload an image to an existing recipe from a URL.
+    """Download an image from a URL and make it the recipe's main image.
+
+    Replaces the recipe's single main image. The download must be a JPEG,
+    PNG, WebP, HEIC or AVIF of at most 10 MB; an HTML page, a 404 or anything
+    else is an error and the current image is left unchanged. Errors show the
+    URL with credentials, query values and Telegram bot tokens redacted.
 
     Args:
         slug: Recipe slug
-        image_url: URL of the image to download and upload
+        image_url: http(s) URL of the image
 
     Returns:
-        JSON string with upload confirmation or error details
+        JSON string with the recipe's new image key, or error details
     """
     try:
-        client = MealieClient()
-        result = client.upload_recipe_image_from_url(slug, image_url)
-        return json.dumps(result, indent=2)
+        with MealieClient() as client:
+            result = client.upload_recipe_image_from_url(slug, image_url)
+            return _image_upload_result(result, f"Main image of recipe '{slug}' replaced")
     except MealieAPIError as e:
-        error_result = {
+        return json.dumps({
+            "error": str(e).replace(image_url, redact_url(image_url)),
+            "status_code": e.status_code,
+            "response_body": e.response_body
+        }, indent=2)
+    except ValueError as e:
+        return json.dumps({"error": str(e)}, indent=2)
+    except Exception as e:
+        return json.dumps({
+            "error": f"Unexpected error: {str(e).replace(image_url, redact_url(image_url))}"
+        }, indent=2)
+
+
+def recipes_image_upload(slug: str, image_base64: str) -> str:
+    """Upload image bytes (base64) as the recipe's main image.
+
+    Replaces the recipe's single main image. The format is detected from the
+    image's own bytes (JPEG, PNG, WebP, HEIC or AVIF, at most 10 MB decoded);
+    anything else is an error and the current image is left unchanged.
+
+    Args:
+        slug: Recipe slug
+        image_base64: The image as standard base64, optionally with a
+            ``data:image/...;base64,`` prefix
+
+    Returns:
+        JSON string with the recipe's new image key, or error details
+    """
+    try:
+        image_data = decode_image_base64(image_base64)  # validate before any request
+        with MealieClient() as client:
+            result = client.upload_recipe_image(slug, image_data)
+            return _image_upload_result(result, f"Main image of recipe '{slug}' replaced")
+    except MealieAPIError as e:
+        return json.dumps({
             "error": str(e),
             "status_code": e.status_code,
             "response_body": e.response_body
-        }
-        return json.dumps(error_result, indent=2)
+        }, indent=2)
+    except ValueError as e:
+        return json.dumps({"error": str(e)}, indent=2)
     except Exception as e:
-        error_result = {
-            "error": f"Unexpected error: {str(e)}"
-        }
-        return json.dumps(error_result, indent=2)
+        return json.dumps({"error": f"Unexpected error: {str(e)}"}, indent=2)
 
 
 def get_recipe_suggestions(limit: int = 10) -> str:

@@ -210,85 +210,58 @@ class TestTimeline:
         assert data["success"] is True
 
     def test_timeline_update_image(self):
-        """Test updating timeline event image."""
-        mock_response = {
-            "id": "event-1",
-            "image": "has image"
+        """The download is checked, then attached with the format from its bytes."""
+        jpeg = b"\xff\xd8\xff\xe0" + b"\x00" * 32
+        mock_client = create_mock_client()
+        mock_client.update_timeline_event_image.return_value = {
+            "event_id": "event-1", "has_image": True, "format": "jpg", "bytes": len(jpeg)
         }
-        mock_client = create_mock_client(put_value=mock_response)
-
-        # Mock httpx client for image download
-        mock_http_response = MagicMock()
-        mock_http_response.content = b"fake image data"
-        mock_http_response.headers = {"content-type": "image/jpeg"}
-        mock_http_response.raise_for_status = MagicMock()
-
-        mock_http_client = MagicMock()
-        mock_http_client.__enter__ = MagicMock(return_value=mock_http_client)
-        mock_http_client.__exit__ = MagicMock(return_value=None)
-        mock_http_client.get = MagicMock(return_value=mock_http_response)
 
         with patch('src.tools.timeline.MealieClient', return_value=mock_client):
-            with patch('httpx.Client', return_value=mock_http_client):
+            with patch('src.tools.timeline.download_image', return_value=(jpeg, "jpg", "image/jpeg")):
                 result = timeline_update_image(
                     event_id="event-1",
                     image_url="https://example.com/image.jpg"
                 )
 
         data = json.loads(result)
-        assert isinstance(data, dict)
         assert data["success"] is True
+        assert data["format"] == "jpg"
+        mock_client.update_timeline_event_image.assert_called_once_with("event-1", jpeg)
 
     def test_timeline_update_image_png(self):
-        """Test updating timeline event image with PNG."""
-        mock_response = {"id": "event-1"}
-        mock_client = create_mock_client(put_value=mock_response)
-
-        mock_http_response = MagicMock()
-        mock_http_response.content = b"fake png data"
-        mock_http_response.headers = {"content-type": "image/png"}
-        mock_http_response.raise_for_status = MagicMock()
-
-        mock_http_client = MagicMock()
-        mock_http_client.__enter__ = MagicMock(return_value=mock_http_client)
-        mock_http_client.__exit__ = MagicMock(return_value=None)
-        mock_http_client.get = MagicMock(return_value=mock_http_response)
+        """A PNG behind a .jpg URL is still uploaded as PNG."""
+        png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
+        mock_client = create_mock_client()
+        mock_client.update_timeline_event_image.return_value = {
+            "event_id": "event-1", "has_image": True, "format": "png", "bytes": len(png)
+        }
 
         with patch('src.tools.timeline.MealieClient', return_value=mock_client):
-            with patch('httpx.Client', return_value=mock_http_client):
+            with patch('src.tools.timeline.download_image', return_value=(png, "png", "image/png")):
                 result = timeline_update_image(
                     event_id="event-1",
-                    image_url="https://example.com/image.png"
+                    image_url="https://example.com/image.jpg"
                 )
 
         data = json.loads(result)
-        assert data["extension"] == "png"
+        assert data["format"] == "png"
 
     def test_timeline_update_image_unknown_type(self):
-        """Test updating timeline event image with unknown type."""
-        mock_response = {"id": "event-1"}
-        mock_client = create_mock_client(put_value=mock_response)
-
-        mock_http_response = MagicMock()
-        mock_http_response.content = b"fake data"
-        mock_http_response.headers = {"content-type": "application/octet-stream"}
-        mock_http_response.raise_for_status = MagicMock()
-
-        mock_http_client = MagicMock()
-        mock_http_client.__enter__ = MagicMock(return_value=mock_http_client)
-        mock_http_client.__exit__ = MagicMock(return_value=None)
-        mock_http_client.get = MagicMock(return_value=mock_http_response)
+        """Something that isn't an image is an error, and nothing is uploaded."""
+        mock_client = create_mock_client()
 
         with patch('src.tools.timeline.MealieClient', return_value=mock_client):
-            with patch('httpx.Client', return_value=mock_http_client):
+            with patch('src.tools.timeline.download_image',
+                       side_effect=ValueError("Not a supported image (JPEG, PNG, WebP, HEIC/HEIF or AVIF)")):
                 result = timeline_update_image(
                     event_id="event-1",
                     image_url="https://example.com/image.xyz"
                 )
 
         data = json.loads(result)
-        # Should default to jpg
-        assert data["extension"] == "xyz" or data["extension"] == "jpg"
+        assert "Not a supported image" in data["error"]
+        mock_client.update_timeline_event_image.assert_not_called()
 
 
 class TestTimelineErrorHandling:

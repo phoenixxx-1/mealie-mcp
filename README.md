@@ -7,7 +7,7 @@ A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server that e
 
 ## Features
 
-### Tools (124 total)
+### Tools (126 total)
 
 **Recipes**
 - `mealie_recipes_add_favorite` - Add a recipe to the current user's favorites
@@ -27,6 +27,7 @@ A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server that e
 - `mealie_recipes_get_rating` - Get rating for a specific recipe
 - `mealie_recipes_get_ratings` - Get all ratings for the current user
 - `mealie_recipes_get_suggestions` - Get recipe suggestions based on preferences and history
+- `mealie_recipes_image_upload` - Replace a recipe's main image with image bytes (base64; JPEG, PNG, WebP, HEIC or AVIF, up to 10 MB)
 - `mealie_recipes_list` - List all recipes with pagination
 - `mealie_recipes_remove_favorite` - Remove a recipe from the current user's favorites
 - `mealie_recipes_search` - Search for recipes in Mealie
@@ -36,10 +37,10 @@ A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server that e
 - `mealie_recipes_shared_delete` - Delete a share link
 - `mealie_recipes_shared_get` - Get details of a shared recipe by ID
 - `mealie_recipes_shared_list` - List all shared recipe links
-- `mealie_recipes_update` - Update an existing recipe in Mealie
+- `mealie_recipes_update` - Update an existing recipe in Mealie (does not change the image; use the image upload tools)
 - `mealie_recipes_update_last_made` - Update the last made timestamp for a recipe
 - `mealie_recipes_update_structured_ingredients` - Update a recipe with structured ingredients from parser output (set `create_missing_foods=False` to refuse unmatched foods instead of creating duplicates)
-- `mealie_recipes_upload_image_from_url` - Upload an image to an existing recipe from a URL
+- `mealie_recipes_upload_image_from_url` - Replace a recipe's main image with one downloaded from a URL (non-images are rejected)
 
 **Recipe Actions (automation)**
 - `mealie_recipe_actions_create` - Create a new recipe action
@@ -60,9 +61,10 @@ A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server that e
 - `mealie_timeline_create` - Create a new timeline event for a recipe
 - `mealie_timeline_delete` - Delete a timeline event
 - `mealie_timeline_get` - Get a specific timeline event by ID
+- `mealie_timeline_image_upload` - Attach image bytes (base64) to a timeline event as its photo; does not change the recipe's main image
 - `mealie_timeline_list` - List all recipe timeline events with pagination
 - `mealie_timeline_update` - Update an existing timeline event
-- `mealie_timeline_update_image` - Upload or update an image for a timeline event from a URL
+- `mealie_timeline_update_image` - Attach an image downloaded from a URL to a timeline event; does not change the recipe's main image
 
 **Meal Planning**
 - `mealie_mealplans_create` - Create a new meal plan entry

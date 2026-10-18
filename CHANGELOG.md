@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Added `mealie_recipes_image_upload` to replace a recipe's main image with image bytes sent as base64 (optionally a `data:image/...;base64,` URL), for photos that aren't hosted anywhere. The format is detected from the bytes (JPEG, PNG, WebP, HEIC, AVIF) and the recipe is read back to confirm its image key changed
+- Added `mealie_timeline_image_upload` to attach image bytes to a timeline event, e.g. a "made it" photo, without changing the recipe's main image
 - Added `date` and `entry_type` to each meal in `mealplans_get_by_date` and `mealplans_today`, matching `mealplans_list`, so a flattened list keeps them
 - Added ingredient substitution support for recipe ingredient lines and foods (requires Mealie 3.26.0 or later)
 - Added `mealie_foods_substitutions_add` tool to add standing substitutions to a food while keeping existing ones
@@ -81,6 +83,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added support for optional expiration dates when creating share links
 
 ### Fixed
+- Fixed `mealie_recipes_update` writing whatever `image` value it was given. Mealie's `image` field is a per-recipe cache key regenerated on every upload, not a reference to a picture, so a borrowed or invented key changed nothing useful and reported success. The parameter is gone, the current key is always kept, and an `image` argument is now rejected by the tool schema
+- Fixed `mealie_recipes_upload_image_from_url` and `mealie_timeline_update_image` uploading whatever a URL returned. Downloads must now be an image by content type and magic bytes (an HTML or 404 page is an error) and at most 10 MB, and the extension comes from the bytes rather than the URL
+- Fixed `mealie_timeline_update_image` sending its multipart upload labelled `application/json`, which Mealie could not read
+- Fixed image URLs, including Telegram bot tokens and query-string credentials, appearing in error messages, tool results and debug logs; they are now redacted
 - Fixed meal plan reads over a date range ignoring Mealie's pagination envelope. `GET /api/households/mealplans` returns `{page, total, items}`, not a list, so `mealplans_get_by_date` reported the envelope as a single meal with every field null (and a count of 1 even for an empty day), `mealplans_list` returned the raw envelope instead of its formatted entries, `mealplans_search` and `mealplans_delete_range` failed with an unexpected error, and the `mealplans://current` resource always showed an empty week. All of them, and `shopping_generate_from_mealplan`, now read the entries under `items` and send `perPage=-1` so a range with more than 50 entries is not cut short. `mealplans_today` was unaffected, since `/today` returns a plain list
 - Fixed substitution entries with an unrecognised key (such as `food`, or a misspelt `substitute_food`) being saved as note-only without an error. `food` is now accepted as an alias for `substitute_food`, any other unknown key is rejected, and keys that point at different foods are an error
 - Fixed `substitutions` being undiscoverable on `mealie_recipes_update_structured_ingredients`: the `parsed_ingredients` items now have a schema that lists `ingredient` and `substitutions`, and every substitutions parameter declares its entry keys

@@ -5,11 +5,14 @@ A robust synchronous HTTP client for interacting with the Mealie API.
 Includes error handling, retry logic, and connection testing.
 """
 
+import base64
+import binascii
 import json
 import os
+import re
 import time
 from typing import Any, Dict, Optional, Union
-from urllib.parse import urljoin
+from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 
 import httpx
 from dotenv import load_dotenv
@@ -125,6 +128,205 @@ def mealplan_entries(response: Any) -> list[Dict[str, Any]]:
         f"entries with 'items', got {type(response).__name__}",
         response_body=json.dumps(response)[:500] if response is not None else None,
     )
+
+
+# -----------------------------------------------------------------------------
+# Images
+# -----------------------------------------------------------------------------
+
+# Mealie re-encodes every recipe and timeline image with Pillow plus
+# pillow_heif, and accepts these source formats (mealie/pkgs/img/minify.py).
+SUPPORTED_IMAGE_FORMATS = "JPEG, PNG, WebP, HEIC/HEIF or AVIF"
+# Mealie sets no limit on direct uploads; this keeps a phone photo well inside
+# it while stopping a runaway download or a mistaken huge payload.
+IMAGE_MAX_BYTES = 10 * 1024 * 1024
+
+_AVIF_BRANDS = {b"avif", b"avis"}
+_HEIC_BRANDS = {b"heic", b"heix", b"hevc", b"hevx", b"heim", b"heis", b"hevm", b"hevs", b"mif1", b"msf1"}
+# Content types that can't be an image; anything else is left to the magic bytes,
+# since file hosts (Telegram's included) often send application/octet-stream.
+_NON_IMAGE_TYPE_PREFIXES = ("text/", "application/json", "application/xml", "application/xhtml",
+                            "application/javascript", "application/pdf")
+
+
+def detect_image_format(data: bytes) -> Optional[tuple[str, str]]:
+    """Identify an image from its magic bytes.
+
+    Returns ``(extension, mime type)``, or None if the bytes aren't one of the
+    formats Mealie accepts. The caller's file name or extension is never used.
+    """
+    if data.startswith(b"\xff\xd8\xff"):
+        return "jpg", "image/jpeg"
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "png", "image/png"
+    if len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "webp", "image/webp"
+    if len(data) >= 12 and data[4:8] == b"ftyp":
+        # ISO base media file: the major brand, then compatible brands, decide it
+        box_size = int.from_bytes(data[:4], "big")
+        end = min(box_size if box_size >= 16 else 16, len(data), 256)
+        brands = {data[8:12]} | {data[i:i + 4] for i in range(16, end - 3, 4)}
+        if brands & _AVIF_BRANDS:
+            return "avif", "image/avif"
+        if brands & _HEIC_BRANDS:
+            return "heic", "image/heic"
+    return None
+
+
+def _format_size(size: int) -> str:
+    if size >= 1024 * 1024:
+        return f"{size / 1048576:.1f} MB"
+    if size >= 1024:
+        return f"{size / 1024:.0f} KB"
+    return f"{size} bytes"
+
+
+def _describe_non_image(data: bytes) -> str:
+    head = data[:64].lstrip().lower()
+    if head.startswith((b"<!doctype html", b"<html", b"<?xml", b"<")):
+        return "it looks like HTML or XML, such as an error page"
+    if head.startswith((b"{", b"[")):
+        return "it looks like JSON"
+    if data.startswith((b"GIF87a", b"GIF89a")):
+        return "GIF isn't a format Mealie's image service accepts"
+    return "the file's signature doesn't match any of them"
+
+
+def validate_image_bytes(data: bytes) -> tuple[str, str]:
+    """Check image bytes before they're sent to Mealie.
+
+    Returns ``(extension, mime type)`` taken from the magic bytes.
+
+    Raises:
+        ValueError: If the data is empty, over ``IMAGE_MAX_BYTES``, or not a
+            supported image format
+    """
+    if not data:
+        raise ValueError("Image is empty")
+    if len(data) > IMAGE_MAX_BYTES:
+        raise ValueError(
+            f"Image is {_format_size(len(data))}; the limit is {_format_size(IMAGE_MAX_BYTES)}"
+        )
+    detected = detect_image_format(data)
+    if detected is None:
+        raise ValueError(
+            f"Not a supported image ({SUPPORTED_IMAGE_FORMATS}): {_describe_non_image(data)}"
+        )
+    return detected
+
+
+def decode_image_base64(value: str) -> bytes:
+    """Decode base64 image data strictly, accepting a ``data:image/...;base64,`` prefix.
+
+    Whitespace and line breaks are ignored; any other character outside the
+    standard base64 alphabet, or bad padding, is an error.
+
+    Raises:
+        ValueError: If the value isn't valid base64 image data, or would
+            decode to more than ``IMAGE_MAX_BYTES``
+    """
+    if not isinstance(value, str):
+        raise ValueError("image_base64 must be a string")
+    text = value.strip()
+    match = re.match(r"data:([^;,]*)((?:;[^;,]*)*),", text, re.IGNORECASE)
+    if match:
+        media_type = match.group(1).strip().lower()
+        if media_type and not media_type.startswith("image/"):
+            raise ValueError(f"data: URL is {media_type}, not an image")
+        if ";base64" not in match.group(2).lower():
+            raise ValueError("data: URL must be base64-encoded (';base64,')")
+        text = text[match.end():]
+    text = re.sub(r"\s+", "", text)
+    if not text:
+        raise ValueError("Image is empty")
+    # Check the size before decoding so a huge payload isn't held twice
+    if len(text) // 4 * 3 > IMAGE_MAX_BYTES + 3:
+        raise ValueError(
+            f"Image is about {_format_size(len(text) // 4 * 3)}; the limit is "
+            f"{_format_size(IMAGE_MAX_BYTES)}"
+        )
+    try:
+        return base64.b64decode(text, validate=True)
+    except (binascii.Error, ValueError) as e:
+        raise ValueError(
+            f"image_base64 is not valid base64 ({e}). Send standard base64, optionally "
+            "with a data:image/...;base64, prefix"
+        ) from None
+
+
+_TELEGRAM_BOT_TOKEN = re.compile(r"bot\d+:[A-Za-z0-9_-]+")
+
+
+def redact_url(url: str) -> str:
+    """A URL safe to show in errors and logs.
+
+    Drops credentials in the host part, every query-string value and the
+    fragment, and masks Telegram bot tokens (``/file/bot<token>/...``).
+    """
+    try:
+        parts = urlsplit(str(url))
+        netloc = parts.netloc
+        if "@" in netloc:
+            netloc = "<redacted>@" + netloc.rsplit("@", 1)[1]
+        query = urlencode([(key, "<redacted>") for key, _ in parse_qsl(parts.query, keep_blank_values=True)])
+        if parts.query and not query:
+            query = "<redacted>"
+        redacted = urlunsplit((parts.scheme, netloc, parts.path, query, ""))
+    except ValueError:
+        return "<unparseable URL>"
+    return _TELEGRAM_BOT_TOKEN.sub("bot<redacted>", redacted).replace("%3Credacted%3E", "<redacted>")
+
+
+def download_image(url: str, max_bytes: int = IMAGE_MAX_BYTES, timeout: float = 30.0) -> tuple[bytes, str, str]:
+    """Download an image, checking it before anything is uploaded.
+
+    The response must not declare a non-image content type (HTML, JSON, text
+    and so on), must stay within ``max_bytes`` (checked while streaming), and
+    its magic bytes must be a supported format.
+
+    Returns:
+        ``(data, extension, mime type)``
+
+    Raises:
+        ValueError: If the URL, the response or the image is unusable. Error
+            messages only ever contain the redacted URL.
+    """
+    safe_url = redact_url(url)
+    if urlsplit(str(url)).scheme.lower() not in ("http", "https"):
+        raise ValueError(f"Image URL must be http or https: {safe_url}")
+
+    try:
+        with httpx.stream("GET", url, follow_redirects=True, timeout=timeout) as response:
+            if response.status_code >= 400:
+                raise ValueError(f"Image download failed with HTTP {response.status_code}: {safe_url}")
+            content_type = response.headers.get("content-type", "").split(";")[0].strip().lower()
+            if content_type.startswith(_NON_IMAGE_TYPE_PREFIXES):
+                raise ValueError(f"URL returned {content_type}, not an image: {safe_url}")
+            declared = response.headers.get("content-length")
+            if declared and declared.isdigit() and int(declared) > max_bytes:
+                raise ValueError(
+                    f"Image is {_format_size(int(declared))}; the limit is "
+                    f"{_format_size(max_bytes)}: {safe_url}"
+                )
+            chunks = []
+            total = 0
+            for chunk in response.iter_bytes():
+                total += len(chunk)
+                if total > max_bytes:
+                    raise ValueError(
+                        f"Image is larger than the {_format_size(max_bytes)} limit: {safe_url}"
+                    )
+                chunks.append(chunk)
+    except httpx.HTTPError as e:
+        message = _TELEGRAM_BOT_TOKEN.sub("bot<redacted>", str(e).replace(str(url), safe_url))
+        raise ValueError(f"Image download failed ({type(e).__name__}): {message}") from None
+
+    data = b"".join(chunks)
+    try:
+        extension, mime = validate_image_bytes(data)
+    except ValueError as e:
+        raise ValueError(f"{e}: {safe_url}") from None
+    return data, extension, mime
 
 
 # Keys a substitution entry may use. ``food`` mirrors the key an ingredient
@@ -1685,82 +1887,81 @@ class MealieClient:
     # Recipe Image Upload
     # -------------------------------------------------------------------------
 
-    def upload_recipe_image_from_url(self, slug: str, image_url: str) -> Dict[str, Any]:
-        """
-        Upload an image to an existing recipe from a URL.
+    def _put_image(self, endpoint: str, data: bytes, extension: str, mime: str) -> Any:
+        """PUT an image as multipart form data (``image`` file plus ``extension``).
 
-        Args:
-            slug: Recipe slug
-            image_url: URL of the image to download and upload
+        The request is built without the client's default
+        ``Content-Type: application/json``, which httpx would otherwise keep
+        and send in place of the multipart boundary header.
+        """
+        request = httpx.Request(
+            "PUT",
+            self._build_url(endpoint),
+            headers={"Authorization": f"Bearer {self.api_token}"},
+            files={"image": (f"image.{extension}", data, mime)},
+            data={"extension": extension},
+        )
+        request.extensions["timeout"] = httpx.Timeout(self.TIMEOUT).as_dict()
+        try:
+            response = self.client.send(request)
+        except httpx.HTTPError as e:
+            raise MealieAPIError(f"Image upload failed: {type(e).__name__}")
+        if response.status_code >= 400:
+            raise MealieAPIError(
+                f"HTTP {response.status_code} error",
+                status_code=response.status_code,
+                response_body=response.text,
+            )
+        try:
+            return response.json() if response.content else None
+        except ValueError:
+            return None
+
+    def upload_recipe_image(self, slug: str, image_data: bytes) -> Dict[str, Any]:
+        """Replace a recipe's main image with the given image bytes.
+
+        The format comes from the magic bytes, never from a caller-supplied
+        name. After uploading, the recipe is read back to confirm its image key
+        changed; Mealie leaves the old image in place if it can't process the
+        new one.
 
         Returns:
-            Update confirmation
+            ``{"slug", "image", "previous_image", "format", "bytes"}``, where
+            ``image`` is the recipe's new image key
 
         Raises:
-            MealieAPIError: If image download or upload fails
+            ValueError: If the bytes aren't a supported image (before any request)
+            MealieAPIError: If Mealie rejects the upload or the key didn't change
         """
-        import io
-        from pathlib import Path
-
-        # Download the image
-        try:
-            response = httpx.get(image_url, timeout=30.0, follow_redirects=True)
-            response.raise_for_status()
-            image_data = response.content
-        except Exception as e:
-            raise MealieAPIError(f"Failed to download image from {image_url}: {str(e)}")
-
-        # Determine extension from URL or content-type
-        extension = Path(image_url).suffix.lstrip('.').lower()
-        if not extension:
-            content_type = response.headers.get('content-type', '')
-            if 'jpeg' in content_type or 'jpg' in content_type:
-                extension = 'jpg'
-            elif 'png' in content_type:
-                extension = 'png'
-            elif 'webp' in content_type:
-                extension = 'webp'
-            else:
-                extension = 'jpg'  # default fallback
-
-        # Upload to Mealie using multipart/form-data
-        # Both image (file) and extension (text) go in the files dict
-        files = {
-            'image': (f'image.{extension}', io.BytesIO(image_data), f'image/{extension}'),
-            'extension': (None, extension)  # Text field in multipart, no filename
+        extension, mime = validate_image_bytes(image_data)
+        previous = self.get(f"/api/recipes/{slug}").get("image")
+        self._put_image(f"/api/recipes/{slug}/image", image_data, extension, mime)
+        current = self.get(f"/api/recipes/{slug}").get("image")
+        if not current or current == previous:
+            raise MealieAPIError(
+                f"Mealie accepted the upload but recipe '{slug}' still has image key "
+                f"{current!r}; the image may not have been replaced"
+            )
+        return {
+            "slug": slug,
+            "image": current,
+            "previous_image": previous,
+            "format": extension,
+            "bytes": len(image_data),
         }
 
-        endpoint = f"/api/recipes/{slug}/image"
-        url = urljoin(self.base_url, endpoint)
+    def upload_recipe_image_from_url(self, slug: str, image_url: str) -> Dict[str, Any]:
+        """Download an image and make it the recipe's main image.
 
-        # Debug logging
-        import sys
-        print(f"DEBUG: Uploading image to {url}", file=sys.stderr)
-        print(f"DEBUG: Extension={extension}, Image size={len(image_data)} bytes", file=sys.stderr)
+        The download is checked first (no HTML or other non-image content
+        type, at most ``IMAGE_MAX_BYTES``, supported magic bytes); nothing is
+        uploaded if it fails. Errors only ever show the redacted URL.
 
-        try:
-            # Use standalone httpx.put() to avoid client's default Content-Type header
-            # httpx will automatically set Content-Type: multipart/form-data with boundary
-            headers = {"Authorization": f"Bearer {self.api_token}"}
-
-            resp = httpx.put(
-                url,
-                files=files,
-                headers=headers,
-                timeout=self.TIMEOUT,
-                follow_redirects=True
-            )
-            print(f"DEBUG: Response status={resp.status_code}", file=sys.stderr)
-            resp.raise_for_status()
-            return {"success": True, "message": f"Image uploaded to recipe '{slug}'"}
-        except httpx.HTTPStatusError as e:
-            raise MealieAPIError(
-                f"Failed to upload image to recipe: {e.response.text}",
-                status_code=e.response.status_code,
-                response_body=e.response.text
-            )
-        except Exception as e:
-            raise MealieAPIError(f"Failed to upload image: {str(e)}")
+        Returns:
+            Same as ``upload_recipe_image``
+        """
+        image_data, _, _ = download_image(image_url)
+        return self.upload_recipe_image(slug, image_data)
 
     # -------------------------------------------------------------------------
     # Recipe from Image
@@ -1913,31 +2114,36 @@ class MealieClient:
         self,
         event_id: str,
         image_data: bytes,
-        extension: str,
+        extension: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """
-        Upload or update an image for a timeline event.
+        """Attach an image to a timeline event, replacing any it has.
 
-        Args:
-            event_id: Timeline event ID (UUID)
-            image_data: Raw image bytes
-            extension: Image file extension (e.g., "jpg", "png")
+        The format comes from the magic bytes; ``extension`` is accepted for
+        backwards compatibility and ignored. After uploading, the event is
+        read back to confirm it now has an image.
 
         Returns:
-            Updated timeline event data
-        """
-        files = {
-            "image": (f"image.{extension}", image_data, f"image/{extension}")
-        }
-        data = {"extension": extension}
+            ``{"event_id", "has_image", "format", "bytes"}``
 
-        response = self.client.put(
-            self._build_url(f"/api/recipes/timeline/events/{event_id}/image"),
-            files=files,
-            data=data,
+        Raises:
+            ValueError: If the bytes aren't a supported image (before any request)
+            MealieAPIError: If Mealie rejects the upload or the event has no image after it
+        """
+        detected_extension, mime = validate_image_bytes(image_data)
+        self._put_image(
+            f"/api/recipes/timeline/events/{event_id}/image", image_data, detected_extension, mime
         )
-        response.raise_for_status()
-        return response.json()
+        event = self.get(f"/api/recipes/timeline/events/{event_id}")
+        if event.get("image") != "has image":
+            raise MealieAPIError(
+                f"Mealie accepted the upload but timeline event {event_id} reports no image"
+            )
+        return {
+            "event_id": event_id,
+            "has_image": True,
+            "format": detected_extension,
+            "bytes": len(image_data),
+        }
 
     # -------------------------------------------------------------------------
     # Event Notifications Management

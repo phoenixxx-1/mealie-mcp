@@ -42,6 +42,7 @@ from tools.recipes import (
     recipes_bulk_update_settings,
     recipes_create_from_image,
     recipes_upload_image_from_url,
+    recipes_image_upload,
     recipes_add_favorite,
     recipes_remove_favorite,
     recipes_get_favorites,
@@ -53,6 +54,7 @@ from tools.timeline import (
     timeline_update,
     timeline_delete,
     timeline_update_image,
+    timeline_image_upload,
 )
 from tools.mealplans import (
     mealplans_list,
@@ -383,9 +385,13 @@ def mealie_recipes_update(
     tags: list[str] | None = None,
     categories: list[str] | None = None,
     org_url: str | None = None,
-    image: str | None = None,
 ) -> str:
     """Update an existing recipe in Mealie.
+
+    This tool does not change the recipe's image. To replace the main image use
+    mealie_recipes_image_upload (image bytes) or mealie_recipes_upload_image_from_url.
+    A recipe's `image` field is only a cache key Mealie sets on each upload; it
+    can't be copied to another recipe to share a picture.
 
     Args:
         slug: The recipe's slug identifier (required)
@@ -400,7 +406,6 @@ def mealie_recipes_update(
         tags: New list of tag names (replaces existing)
         categories: New list of category names (replaces existing)
         org_url: Original recipe URL
-        image: Recipe image identifier
 
     Returns:
         JSON string with updated recipe details
@@ -418,7 +423,6 @@ def mealie_recipes_update(
         tags=tags,
         categories=categories,
         org_url=org_url,
-        image=image,
     )
 
 
@@ -636,25 +640,53 @@ def mealie_recipes_create_from_image(image_data: str, extension: str = "jpg") ->
 
 @mcp.tool()
 def mealie_recipes_upload_image_from_url(slug: str, image_url: str) -> str:
-    """Upload an image to an existing recipe from a URL.
+    """Download an image from a URL and make it the recipe's main image.
 
-    Downloads an image from the provided URL and uploads it to the specified recipe.
-    The image will be automatically resized and optimized by Mealie.
+    REPLACES the recipe's single main image. The URL must return a JPEG, PNG,
+    WebP, HEIC or AVIF image of at most 10 MB; an HTML page, a 404 or any other
+    content is an error and the current image is left unchanged. Errors show the
+    URL with credentials, query values and Telegram bot tokens redacted.
+
+    For a photo you hold as a file rather than a public URL, use
+    mealie_recipes_image_upload. To log a "made it" photo without changing the
+    main image, create a timeline event and use mealie_timeline_image_upload.
 
     Args:
-        slug: Recipe slug identifier
-        image_url: Full URL of the image to download and upload
+        slug: The recipe's slug identifier
+        image_url: http(s) URL of the image
 
     Returns:
-        JSON string with upload confirmation or error details
-
-    Example:
-        mealie_recipes_upload_image_from_url(
-            slug="sous-vide-salmon",
-            image_url="https://images.anovaculinary.com/sous-vide-salmon-2/header/sous-vide-salmon-2-header-centered.jpg"
-        )
+        JSON string with the recipe's new image key (`image`), the previous key
+        (`previous_image`), the detected `format` and size in `bytes`
     """
     return recipes_upload_image_from_url(slug=slug, image_url=image_url)
+
+
+@mcp.tool()
+def mealie_recipes_image_upload(slug: str, image_base64: str) -> str:
+    """Upload an image file's bytes as the recipe's main image.
+
+    REPLACES the recipe's single main image. Pass the image as base64, e.g. a
+    photo received as a file; it doesn't need to be hosted anywhere. The format
+    is detected from the image's own bytes, so no file name or extension is
+    needed: JPEG, PNG, WebP, HEIC (iPhone photos) or AVIF, at most 10 MB once
+    decoded. Anything else (bad base64, an HTML page, a GIF, an empty or
+    oversized file) is an error and the current image is left unchanged.
+
+    To log a "made it" photo without changing the main image, create a timeline
+    event and use mealie_timeline_image_upload instead.
+
+    Args:
+        slug: The recipe's slug identifier
+        image_base64: The image as standard base64, optionally with a
+            `data:image/...;base64,` prefix
+
+    Returns:
+        JSON string with the recipe's new image key (`image`), the previous key
+        (`previous_image`), the detected `format` and size in `bytes`. The new
+        key is read back from the recipe, confirming the image was replaced.
+    """
+    return recipes_image_upload(slug=slug, image_base64=image_base64)
 
 
 @mcp.tool()
@@ -2257,25 +2289,48 @@ def mealie_timeline_delete(event_id: str) -> str:
 
 @mcp.tool()
 def mealie_timeline_update_image(event_id: str, image_url: str) -> str:
-    """Upload or update an image for a timeline event from a URL.
+    """Download an image from a URL and attach it to a timeline event.
 
-    Downloads an image from the provided URL and uploads it to the specified
-    timeline event. The image will be automatically resized and optimized by Mealie.
+    Sets the event's photo, replacing any it had. This does NOT change the
+    recipe's main image. The URL must return a JPEG, PNG, WebP, HEIC or AVIF
+    image of at most 10 MB; an HTML page, a 404 or any other content is an
+    error and nothing is uploaded. Errors show the URL with credentials, query
+    values and Telegram bot tokens redacted.
 
     Args:
         event_id: Timeline event ID (UUID)
-        image_url: Full URL of the image to download and upload
+        image_url: http(s) URL of the image
 
     Returns:
         JSON string with upload confirmation or error details
-
-    Example:
-        mealie_timeline_update_image(
-            event_id="550e8400-e29b-41d4-a716-446655440000",
-            image_url="https://example.com/my-dish.jpg"
-        )
     """
     return timeline_update_image(event_id=event_id, image_url=image_url)
+
+
+@mcp.tool()
+def mealie_timeline_image_upload(event_id: str, image_base64: str) -> str:
+    """Upload an image file's bytes as a timeline event's photo.
+
+    Sets the event's photo, replacing any it had. This does NOT change the
+    recipe's main image; use mealie_recipes_image_upload for that. Typical use:
+    log a "made it" photo by creating the event with mealie_timeline_create,
+    then attaching the photo here.
+
+    Pass the image as base64; it doesn't need to be hosted anywhere. The format
+    is detected from the image's own bytes: JPEG, PNG, WebP, HEIC (iPhone
+    photos) or AVIF, at most 10 MB once decoded. Anything else is an error and
+    nothing is uploaded.
+
+    Args:
+        event_id: Timeline event ID (UUID)
+        image_base64: The image as standard base64, optionally with a
+            `data:image/...;base64,` prefix
+
+    Returns:
+        JSON string with upload confirmation (the event is read back to confirm
+        it has an image), the detected `format` and size in `bytes`
+    """
+    return timeline_image_upload(event_id=event_id, image_base64=image_base64)
 
 
 # =============================================================================
