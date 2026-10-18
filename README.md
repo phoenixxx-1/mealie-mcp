@@ -7,7 +7,7 @@ A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server that e
 
 ## Features
 
-### Tools (122 total)
+### Tools (124 total)
 
 **Recipes**
 - `mealie_recipes_add_favorite` - Add a recipe to the current user's favorites
@@ -135,6 +135,34 @@ food instead of creating a duplicate.
 `mealie_foods_create`, `mealie_foods_update`, `mealie_units_create` and
 `mealie_units_update` also accept an `aliases` list, which *replaces* the whole
 set. Use the add/remove tools above for incremental changes.
+
+**Ingredient Substitutions**
+
+Substitutions are "may be replaced by" options, such as "passata, or chopped
+tomatoes" or "butter, or vegan block". Mealie keeps them in two places: on a
+single recipe ingredient line, and on a food as a standing default. This needs
+Mealie 3.26.0 or later.
+
+- `mealie_foods_substitutions_add` - Add one or more standing substitutions to a food, keeping the existing ones
+- `mealie_foods_substitutions_remove` - Remove one or more standing substitutions from a food
+
+Each substitution is a substitute food name, or a dict with
+`substitute_food_id` or `substitute_food` (a name) plus an optional `note`. A
+note on its own is fine too, e.g. `{"note": "water and a stock cube"}`. Names
+are matched case-insensitively against existing food names, plural names and
+aliases.
+
+- `mealie_foods_create` and `mealie_foods_update` accept a `substitutions` list,
+  which *replaces* the whole set (`[]` clears it, leaving it out changes
+  nothing). Named substitute foods must already exist.
+- `mealie_recipes_update_structured_ingredients` accepts a `substitutions` list
+  on each ingredient line. Missing substitute foods are created, or reported as
+  `unmatched_substitute_foods` when `create_missing_foods=False`. The response
+  includes `saved_substitutions`, read back from Mealie.
+- If Mealie saves none of the substitutions sent (a server version without
+  substitution support), the response carries a `warning`.
+- `mealie_recipes_get` and `mealie_foods_get` return each substitution with
+  its resolved `substituteFood`.
 
 **Organizers (categories, tags, tools)**
 - `mealie_categories_create` - Create a new category

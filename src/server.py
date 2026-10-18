@@ -97,6 +97,8 @@ from tools.foods import (
     foods_aliases_list,
     foods_aliases_add,
     foods_aliases_remove,
+    foods_substitutions_add,
+    foods_substitutions_remove,
     units_list,
     units_create,
     units_get,
@@ -228,7 +230,9 @@ def mealie_recipes_get(slug: str) -> str:
         slug: The recipe's URL slug identifier
 
     Returns:
-        JSON string with full recipe details including ingredients, instructions, nutrition
+        JSON string with full recipe details including ingredients, instructions, nutrition.
+        Each ingredient line has a `substitutions` list of {substituteFoodId,
+        substituteFood: {id, name, pluralName}, note}.
     """
     return recipes_get(slug=slug)
 
@@ -383,15 +387,31 @@ def mealie_recipes_update_structured_ingredients(
             - food: string or dict with name (e.g., "flour" or {"name": "flour"})
             - note: optional string (e.g., "sifted")
             - display: optional string for human-readable format
+            - substitutions: optional list of ingredient options for this line, set on
+              the ingredient or beside it on a parser result (beside it wins, since the
+              parser already returns an empty list on the ingredient). Each entry is a
+              food name ("chopped tomatoes"), or a dict with `substitute_food_id` or
+              `substitute_food` (a name) plus an optional `note`, e.g.
+              {"substitute_food": "vegan block", "note": "for a dairy-free version"}.
+              A note on its own is also allowed. Names are matched case-insensitively
+              against existing food names, plural names and aliases. The whole
+              ingredient list is replaced, so a line without substitutions is saved
+              with none.
         create_missing_foods: When True (default), foods the parser did not match to
-            an existing food are created automatically. Set to False to have the tool
-            refuse the update and return the unmatched food names instead, so you can
-            alias them onto existing foods (mealie_foods_aliases_add), re-parse, and
-            retry without creating duplicates.
+            an existing food are created automatically, as are substitute foods named
+            but not found. Set to False to have the tool refuse the update and return
+            the unmatched names instead (`unmatched_foods`,
+            `unmatched_substitute_foods`), so you can alias them onto existing foods
+            (mealie_foods_aliases_add), re-parse, and retry without creating duplicates.
+
+    Substitutions need Mealie 3.26.0 or later.
 
     Returns:
         JSON string with updated recipe details, plus `created_foods` and
-        `created_units` (name -> id) for anything that was created
+        `created_units` (name -> id) for anything that was created, and
+        `saved_substitutions` (per line, with the resolved substitute food name)
+        when any line has substitutions, or a `warning` if substitutions were sent
+        but Mealie saved none (a server without substitution support)
 
     Example workflow:
         1. Parse ingredients:
@@ -1305,7 +1325,8 @@ def mealie_foods_create(
     name: str,
     description: str = None,
     label_id: str = None,
-    aliases: list[str] | None = None
+    aliases: list[str] | None = None,
+    substitutions: list[dict | str] | None = None
 ) -> str:
     """Create a new food.
 
@@ -1315,11 +1336,23 @@ def mealie_foods_create(
         label_id: Optional label ID (UUID) to assign
         aliases: Optional alternate names the ingredient parser should match to
             this food (e.g. ["scallions", "spring onions"] for "green onion")
+        substitutions: Optional standing substitutions for this food. Each entry
+            is a substitute food name, or a dict with `substitute_food_id` or
+            `substitute_food` (a name) plus an optional `note`, e.g.
+            [{"substitute_food": "vegan block", "note": "dairy-free"}]. A note on
+            its own is also allowed. Named substitute foods must already exist
+            (matched by name, plural name or alias).
 
     Returns:
         JSON string with created food details
     """
-    return foods_create(name=name, description=description, label_id=label_id, aliases=aliases)
+    return foods_create(
+        name=name,
+        description=description,
+        label_id=label_id,
+        aliases=aliases,
+        substitutions=substitutions
+    )
 
 
 @mcp.tool()
@@ -1330,7 +1363,8 @@ def mealie_foods_get(food_id: str) -> str:
         food_id: The food's ID
 
     Returns:
-        JSON string with food details
+        JSON string with food details, including `aliases` and the food's standing
+        `substitutions` as {substituteFoodId, substituteFood: {id, name, pluralName}, note}
     """
     return foods_get(food_id=food_id)
 
@@ -1341,7 +1375,8 @@ def mealie_foods_update(
     name: str | None = None,
     description: str | None = None,
     label_id: str | None = None,
-    aliases: list[str] | None = None
+    aliases: list[str] | None = None,
+    substitutions: list[dict | str] | None = None
 ) -> str:
     """Update an existing food.
 
@@ -1354,6 +1389,11 @@ def mealie_foods_update(
             Pass an empty list to clear them, or omit to leave them alone.
             To add or drop individual aliases use mealie_foods_aliases_add /
             mealie_foods_aliases_remove instead.
+        substitutions: Replacement list of standing substitutions, overwriting any
+            existing ones. Pass an empty list to clear them, or omit to leave them
+            alone. Same entry shape as mealie_foods_create. To add or drop
+            individual substitutions use mealie_foods_substitutions_add /
+            mealie_foods_substitutions_remove instead.
 
     Returns:
         JSON string with updated food details
@@ -1363,7 +1403,8 @@ def mealie_foods_update(
         name=name,
         description=description,
         label_id=label_id,
-        aliases=aliases
+        aliases=aliases,
+        substitutions=substitutions
     )
 
 
@@ -1562,6 +1603,49 @@ def mealie_foods_aliases_remove(food_id: str, aliases: list[str]) -> str:
         JSON string with the remaining alias list
     """
     return foods_aliases_remove(food_id=food_id, aliases=aliases)
+
+
+@mcp.tool()
+def mealie_foods_substitutions_add(food_id: str, substitutions: list[dict | str]) -> str:
+    """Add one or more standing substitutions to a food, keeping the existing ones.
+
+    A food's substitutions are the "may be replaced by" options Mealie offers
+    wherever the food is used, e.g. butter -> vegan block. Needs Mealie 3.26.0
+    or later.
+
+    Args:
+        food_id: The food's ID
+        substitutions: Substitutions to add. Each entry is a substitute food name,
+            or a dict with `substitute_food_id` or `substitute_food` (a name) plus
+            an optional `note`; a note on its own is also allowed. Named foods must
+            already exist (matched by name, plural name or alias). A substitute the
+            food already has keeps its place, and its note is replaced only if a
+            new one is given, so this is safe to call repeatedly.
+
+    Returns:
+        JSON string with the resulting substitution list, including each
+        substitute food's resolved name
+    """
+    return foods_substitutions_add(food_id=food_id, substitutions=substitutions)
+
+
+@mcp.tool()
+def mealie_foods_substitutions_remove(food_id: str, substitutions: list[dict | str]) -> str:
+    """Remove one or more standing substitutions from a food.
+
+    Args:
+        food_id: The food's ID
+        substitutions: Substitutions to remove. An entry naming a substitute food
+            (a name, or a dict with `substitute_food_id` or `substitute_food`)
+            removes that food's substitution whatever its note; names match
+            case-insensitively against food names, plural names and aliases. A note-only entry ({"note": "..."}) removes
+            note-only substitutions with that note. Entries that match nothing
+            are ignored.
+
+    Returns:
+        JSON string with the remaining substitution list
+    """
+    return foods_substitutions_remove(food_id=food_id, substitutions=substitutions)
 
 
 @mcp.tool()
