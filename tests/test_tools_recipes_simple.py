@@ -763,7 +763,9 @@ class TestRecipesUploadImage:
         mock_client = MagicMock()
         mock_client.__enter__ = MagicMock(return_value=mock_client)
         mock_client.__exit__ = MagicMock(return_value=None)
-        mock_client.upload_image_from_url.return_value = {"success": True}
+        mock_client.upload_recipe_image_from_url.return_value = {
+            "slug": "test-recipe", "image": "new2", "previous_image": "old1", "format": "jpg", "bytes": 36
+        }
 
         with patch('src.tools.recipes.MealieClient', return_value=mock_client):
             result = recipes_upload_image_from_url(
@@ -772,7 +774,11 @@ class TestRecipesUploadImage:
             )
 
         data = json.loads(result)
-        assert isinstance(data, dict)
+        assert data["success"] is True
+        assert data["image"] == "new2"
+        mock_client.upload_recipe_image_from_url.assert_called_once_with(
+            "test-recipe", "https://example.com/image.jpg"
+        )
 
     def test_upload_image_from_url_error(self):
         """Test error handling in image upload."""

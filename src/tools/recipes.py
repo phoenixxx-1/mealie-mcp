@@ -1363,8 +1363,10 @@ def recipes_upload_image_from_url(slug: str, image_url: str) -> str:
 
     Replaces the recipe's single main image. The download must be a JPEG,
     PNG, WebP, HEIC or AVIF of at most 10 MB; an HTML page, a 404 or anything
-    else is an error and the current image is left unchanged. Errors show the
-    URL with credentials, query values and Telegram bot tokens redacted.
+    else is an error and nothing is uploaded. If Mealie can't decode a file that
+    passed these checks the upload fails; for a damaged WebP it may already have
+    removed the current image. Errors show the URL with credentials, query
+    values and Telegram bot tokens redacted.
 
     Args:
         slug: Recipe slug
@@ -1396,7 +1398,9 @@ def recipes_image_upload(slug: str, image_base64: str) -> str:
 
     Replaces the recipe's single main image. The format is detected from the
     image's own bytes (JPEG, PNG, WebP, HEIC or AVIF, at most 10 MB decoded);
-    anything else is an error and the current image is left unchanged.
+    anything else is an error and nothing is uploaded. If Mealie can't decode a
+    file that passed these checks the upload fails; for a damaged WebP it may
+    already have removed the current image.
 
     Args:
         slug: Recipe slug

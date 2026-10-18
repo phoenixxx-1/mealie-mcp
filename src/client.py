@@ -254,7 +254,7 @@ def decode_image_base64(value: str) -> bytes:
         ) from None
 
 
-_TELEGRAM_BOT_TOKEN = re.compile(r"bot\d+:[A-Za-z0-9_-]+")
+_TELEGRAM_BOT_TOKEN = re.compile(r"bot\d+(?::|%3A)[A-Za-z0-9_-]+", re.IGNORECASE)
 
 
 def redact_url(url: str) -> str:
@@ -277,12 +277,18 @@ def redact_url(url: str) -> str:
     return _TELEGRAM_BOT_TOKEN.sub("bot<redacted>", redacted).replace("%3Credacted%3E", "<redacted>")
 
 
-def download_image(url: str, max_bytes: int = IMAGE_MAX_BYTES, timeout: float = 30.0) -> tuple[bytes, str, str]:
+def download_image(
+    url: str,
+    max_bytes: int = IMAGE_MAX_BYTES,
+    timeout: float = 30.0,
+    deadline: float = 120.0,
+) -> tuple[bytes, str, str]:
     """Download an image, checking it before anything is uploaded.
 
     The response must not declare a non-image content type (HTML, JSON, text
-    and so on), must stay within ``max_bytes`` (checked while streaming), and
-    its magic bytes must be a supported format.
+    and so on), must stay within ``max_bytes`` (checked while streaming), must
+    finish within ``deadline`` seconds in total (``timeout`` applies to each
+    connect/read), and its magic bytes must be a supported format.
 
     Returns:
         ``(data, extension, mime type)``
@@ -310,7 +316,10 @@ def download_image(url: str, max_bytes: int = IMAGE_MAX_BYTES, timeout: float = 
                 )
             chunks = []
             total = 0
+            started = time.monotonic()
             for chunk in response.iter_bytes():
+                if time.monotonic() - started > deadline:
+                    raise ValueError(f"Image download took longer than {deadline:.0f} seconds: {safe_url}")
                 total += len(chunk)
                 if total > max_bytes:
                     raise ValueError(
@@ -1901,11 +1910,10 @@ class MealieClient:
             files={"image": (f"image.{extension}", data, mime)},
             data={"extension": extension},
         )
-        request.extensions["timeout"] = httpx.Timeout(self.TIMEOUT).as_dict()
         try:
             response = self.client.send(request)
         except httpx.HTTPError as e:
-            raise MealieAPIError(f"Image upload failed: {type(e).__name__}")
+            raise MealieAPIError(f"Image upload failed ({type(e).__name__}): {e}")
         if response.status_code >= 400:
             raise MealieAPIError(
                 f"HTTP {response.status_code} error",
@@ -1922,8 +1930,9 @@ class MealieClient:
 
         The format comes from the magic bytes, never from a caller-supplied
         name. After uploading, the recipe is read back to confirm its image key
-        changed; Mealie leaves the old image in place if it can't process the
-        new one.
+        changed to the key Mealie returned. If Mealie can't process the file
+        it raises before changing the key; it keeps the old image except for a
+        WebP upload, which overwrites ``original.webp`` before decoding.
 
         Returns:
             ``{"slug", "image", "previous_image", "format", "bytes"}``, where
@@ -1935,9 +1944,11 @@ class MealieClient:
         """
         extension, mime = validate_image_bytes(image_data)
         previous = self.get(f"/api/recipes/{slug}").get("image")
-        self._put_image(f"/api/recipes/{slug}/image", image_data, extension, mime)
+        uploaded = self._put_image(f"/api/recipes/{slug}/image", image_data, extension, mime)
+        returned = uploaded.get("image") if isinstance(uploaded, dict) else None
         current = self.get(f"/api/recipes/{slug}").get("image")
-        if not current or current == previous:
+        # Mealie answers with the new key; without one, a changed key is the evidence
+        if not current or (current != returned if returned else current == previous):
             raise MealieAPIError(
                 f"Mealie accepted the upload but recipe '{slug}' still has image key "
                 f"{current!r}; the image may not have been replaced"

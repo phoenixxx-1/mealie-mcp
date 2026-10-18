@@ -644,8 +644,11 @@ def mealie_recipes_upload_image_from_url(slug: str, image_url: str) -> str:
 
     REPLACES the recipe's single main image. The URL must return a JPEG, PNG,
     WebP, HEIC or AVIF image of at most 10 MB; an HTML page, a 404 or any other
-    content is an error and the current image is left unchanged. Errors show the
-    URL with credentials, query values and Telegram bot tokens redacted.
+    content is an error, nothing is uploaded and the current image is kept.
+    If Mealie itself can't decode a file that passed these checks, the upload
+    fails; for a damaged WebP it may already have removed the current image.
+    Errors show the URL with credentials, query values and Telegram bot tokens
+    redacted.
 
     For a photo you hold as a file rather than a public URL, use
     mealie_recipes_image_upload. To log a "made it" photo without changing the
@@ -671,7 +674,10 @@ def mealie_recipes_image_upload(slug: str, image_base64: str) -> str:
     is detected from the image's own bytes, so no file name or extension is
     needed: JPEG, PNG, WebP, HEIC (iPhone photos) or AVIF, at most 10 MB once
     decoded. Anything else (bad base64, an HTML page, a GIF, an empty or
-    oversized file) is an error and the current image is left unchanged.
+    oversized file) is an error, nothing is uploaded and the current image is
+    kept.
+    If Mealie itself can't decode a file that passed these checks, the upload
+    fails; for a damaged WebP it may already have removed the current image.
 
     To log a "made it" photo without changing the main image, create a timeline
     event and use mealie_timeline_image_upload instead.

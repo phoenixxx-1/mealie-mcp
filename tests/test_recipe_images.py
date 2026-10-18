@@ -144,6 +144,10 @@ class TestRedactUrl:
         ("https://user:pw@cdn.example/a.jpg?token=abc&w=100#x",
          "https://<redacted>@cdn.example/a.jpg?token=<redacted>&w=<redacted>"),
         ("https://example.com/a.jpg", "https://example.com/a.jpg"),
+        ("https://api.telegram.org/file/bot123%3AAAH-secret/p.jpg",
+         "https://api.telegram.org/file/bot<redacted>/p.jpg"),
+        ("https://api.telegram.org/file/BOT123:AAH-secret/p.jpg",
+         "https://api.telegram.org/file/bot<redacted>/p.jpg"),
     ])
     def test_redaction(self, url, expected):
         assert redact_url(url) == expected
@@ -213,6 +217,15 @@ class TestDownload:
         with pytest.raises(ValueError, match="larger than the 16 bytes limit"):
             download_image("https://img.example/p", max_bytes=16)
 
+    @respx.mock
+    def test_total_deadline(self):
+        """A server that drips bytes can't hold the call forever."""
+        respx.get("https://img.example/p").mock(return_value=Response(200, content=iter([JPEG[:8], JPEG[8:]])))
+        clock = iter([0.0, 0.0, 500.0])
+        with patch("src.client.time.monotonic", side_effect=lambda: next(clock)):
+            with pytest.raises(ValueError, match="took longer than 120 seconds"):
+                download_image("https://img.example/p")
+
     def test_only_http_urls(self):
         with pytest.raises(ValueError, match="must be http or https"):
             download_image("file:///etc/passwd")
@@ -245,9 +258,33 @@ class TestRecipeUpload:
         assert b'filename="image.heic"' in body and HEIC in body
 
     @respx.mock
+    def test_key_must_match_the_one_mealie_returned(self):
+        respx.get(f"{BASE_URL}/api/recipes/soup").mock(side_effect=[
+            Response(200, json=recipe("old1")), Response(200, json=recipe("other")),
+        ])
+        respx.put(f"{BASE_URL}/api/recipes/soup/image").mock(return_value=Response(200, json={"image": "new2"}))
+        with pytest.raises(MealieAPIError, match="still has image key 'other'"):
+            MealieClient(BASE_URL, "token").upload_recipe_image("soup", JPEG)
+
+    @respx.mock
+    def test_returned_key_equal_to_the_old_one_is_still_success(self):
+        """A 4-character key can repeat; Mealie's own answer is what counts."""
+        respx.get(f"{BASE_URL}/api/recipes/soup").mock(return_value=Response(200, json=recipe("abcd")))
+        respx.put(f"{BASE_URL}/api/recipes/soup/image").mock(return_value=Response(200, json={"image": "abcd"}))
+        assert MealieClient(BASE_URL, "token").upload_recipe_image("soup", JPEG)["image"] == "abcd"
+
+    @respx.mock
+    def test_connection_failure_keeps_its_reason(self):
+        respx.get(f"{BASE_URL}/api/recipes/soup").mock(return_value=Response(200, json=recipe("old1")))
+        respx.put(f"{BASE_URL}/api/recipes/soup/image").mock(side_effect=httpx.ConnectError("connection refused"))
+        with pytest.raises(MealieAPIError, match="ConnectError.*connection refused"):
+            MealieClient(BASE_URL, "token").upload_recipe_image("soup", JPEG)
+
+    @respx.mock
     def test_unchanged_key_is_an_error(self):
+        """Without a key in Mealie's answer, an unchanged key means it didn't take."""
         respx.get(f"{BASE_URL}/api/recipes/soup").mock(return_value=Response(200, json=recipe("same")))
-        respx.put(f"{BASE_URL}/api/recipes/soup/image").mock(return_value=Response(200, json={"image": "same"}))
+        respx.put(f"{BASE_URL}/api/recipes/soup/image").mock(return_value=Response(200, json={}))
 
         with pytest.raises(MealieAPIError, match="still has image key"):
             MealieClient(BASE_URL, "token").upload_recipe_image("soup", JPEG)
@@ -340,10 +377,26 @@ class TestToolWrappers:
         mock.update_timeline_event_image.assert_called_once_with("ev-1", HEIC)
 
     @respx.mock
-    def test_recipe_url_tool_never_shows_the_token(self):
-        respx.get(TOKEN_URL).mock(return_value=Response(404))
+    def test_recipe_url_tool_never_shows_the_token(self, monkeypatch):
+        monkeypatch.setenv("MEALIE_URL", BASE_URL)
+        monkeypatch.setenv("MEALIE_API_TOKEN", "token")
+        download = respx.get(TOKEN_URL).mock(return_value=Response(404))
+        mealie = respx.route(host="test.example.com")
+
         data = json.loads(recipes_upload_image_from_url("soup", TOKEN_URL))
+
+        assert download.called  # the download really ran
+        assert not mealie.called
+        assert "HTTP 404" in data["error"]
         assert "secret_token" not in json.dumps(data)
+
+    def test_recipe_url_tool_redacts_a_url_inside_an_api_error(self):
+        mock = mock_client()
+        mock.upload_recipe_image_from_url.side_effect = MealieAPIError(f"upload of {TOKEN_URL} failed")
+        with patch("src.tools.recipes.MealieClient", return_value=mock):
+            data = json.loads(recipes_upload_image_from_url("soup", TOKEN_URL))
+        assert "secret_token" not in json.dumps(data)
+        assert "bot<redacted>" in data["error"]
 
     @respx.mock
     def test_timeline_url_tool_never_shows_the_token(self):
