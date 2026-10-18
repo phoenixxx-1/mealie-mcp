@@ -19,6 +19,7 @@ from src.tools.mealplans import (
     mealplans_get_by_date,
     mealplans_list,
     mealplans_search,
+    mealplans_today,
 )
 from src.tools.shopping import shopping_generate_from_mealplan
 
@@ -86,8 +87,9 @@ class TestGetByDate:
 
         assert data["count"] == 2
         assert data["meals"]["dinner"] == [{
-            "id": 11, "title": "", "text": "", "recipe_id": "recipe-1",
-            "recipe_name": "Pasta al pomodoro", "recipe_slug": "pasta-al-pomodoro",
+            "id": 11, "date": TODAY, "entry_type": "dinner", "title": "", "text": "",
+            "recipe_id": "recipe-1", "recipe_name": "Pasta al pomodoro",
+            "recipe_slug": "pasta-al-pomodoro",
         }]
         assert data["meals"]["lunch"][0]["title"] == "Leftovers"
         assert data["meals"]["lunch"][0]["recipe_id"] is None
@@ -100,6 +102,35 @@ class TestGetByDate:
             data = json.loads(mealplans_get_by_date(TODAY))
 
         assert data == {"date": TODAY, "count": 0, "meals": {}}
+
+
+class TestGroupedItemsMatchList:
+    """get_by_date and today group by meal type; each item still carries the list fields."""
+
+    def test_flattened_items_equal_list_entries(self):
+        mock = mock_client(envelope(DINNER, LUNCH_NOTE))
+        with patch("src.tools.mealplans.MealieClient", return_value=mock):
+            listed = json.loads(mealplans_list(start_date=TODAY, end_date=TODAY))["entries"]
+            by_date = json.loads(mealplans_get_by_date(TODAY))["meals"]
+
+        mock_today = mock_client([DINNER, LUNCH_NOTE])  # /today returns a bare list
+        with patch("src.tools.mealplans.MealieClient", return_value=mock_today):
+            today = json.loads(mealplans_today())["meals"]
+
+        def flatten(grouped):
+            return sorted((item for items in grouped.values() for item in items), key=lambda i: i["id"])
+
+        assert flatten(by_date) == listed
+        assert flatten(today) == listed
+
+    def test_text_only_entry_keeps_null_recipe_fields(self):
+        mock = mock_client(envelope(LUNCH_NOTE))
+        with patch("src.tools.mealplans.MealieClient", return_value=mock):
+            lunch = json.loads(mealplans_get_by_date(TODAY))["meals"]["lunch"][0]
+
+        assert lunch["recipe_id"] is None
+        assert lunch["recipe_name"] is None
+        assert lunch["recipe_slug"] is None
 
 
 class TestList:

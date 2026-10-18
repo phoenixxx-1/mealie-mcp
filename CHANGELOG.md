@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Added `date` and `entry_type` to each meal in `mealplans_get_by_date` and `mealplans_today`, matching `mealplans_list`, so a flattened list keeps them
 - Added ingredient substitution support for recipe ingredient lines and foods (requires Mealie 3.26.0 or later)
 - Added `mealie_foods_substitutions_add` tool to add standing substitutions to a food while keeping existing ones
 - Added `mealie_foods_substitutions_remove` tool to remove standing substitutions from a food
