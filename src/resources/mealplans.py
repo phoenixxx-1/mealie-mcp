@@ -9,13 +9,13 @@ from typing import Optional
 
 # Handle imports for both module and script execution
 try:
-    from ..client import MealieClient, MealieAPIError
+    from ..client import MealieClient, MealieAPIError, mealplan_entries, mealplan_range_params
 except ImportError:
     # Running as a script, use absolute imports
     import sys
     from pathlib import Path
     sys.path.insert(0, str(Path(__file__).parent.parent))
-    from client import MealieClient, MealieAPIError
+    from client import MealieClient, MealieAPIError, mealplan_entries, mealplan_range_params
 
 
 def get_current_mealplan() -> str:
@@ -36,10 +36,10 @@ def get_current_mealplan() -> str:
         week_end = week_start + timedelta(days=6)  # Sunday
 
         # Get meal plans for the week
-        response = client.get("/api/households/mealplans", params={
-            "start_date": week_start.isoformat(),
-            "end_date": week_end.isoformat(),
-        })
+        response = mealplan_entries(client.get(
+            "/api/households/mealplans",
+            params=mealplan_range_params(week_start.isoformat(), week_end.isoformat())
+        ))
 
         client.close()
 

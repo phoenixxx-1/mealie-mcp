@@ -92,6 +92,34 @@ SUBSTITUTIONS_NOT_SAVED_WARNING = (
 )
 
 
+def mealplan_range_params(start_date: Optional[str], end_date: Optional[str]) -> Dict[str, Any]:
+    """Query params for ``GET /api/households/mealplans`` over a date range.
+
+    The endpoint is paginated with a default page size of 50, so
+    ``perPage=-1`` (Mealie's "return everything" value) is sent too.
+    """
+    params: Dict[str, Any] = {"page": 1, "perPage": -1}
+    if start_date:
+        params["start_date"] = start_date
+    if end_date:
+        params["end_date"] = end_date
+    return params
+
+
+def mealplan_entries(response: Any) -> list[Dict[str, Any]]:
+    """Meal plan entries from ``GET /api/households/mealplans``.
+
+    Mealie returns a pagination envelope with the entries under ``items``;
+    a bare list is accepted too.
+    """
+    if isinstance(response, dict):
+        items = response.get("items")
+        return [entry for entry in items if isinstance(entry, dict)] if isinstance(items, list) else []
+    if isinstance(response, list):
+        return [entry for entry in response if isinstance(entry, dict)]
+    return []
+
+
 # Keys a substitution entry may use. ``food`` mirrors the key an ingredient
 # line uses for its own food; the camelCase ones are what Mealie returns.
 SUBSTITUTION_FOOD_ID_KEYS = ("substitute_food_id", "substituteFoodId")
