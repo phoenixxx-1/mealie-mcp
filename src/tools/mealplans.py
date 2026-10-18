@@ -116,7 +116,10 @@ def mealplans_today() -> str:
 
                 recipe = entry.get("recipe")
                 meals_by_type[entry_type].append({
+                    # Same per-item fields as mealplans_list, so a flattened list matches
                     "id": entry.get("id"),
+                    "date": entry.get("date"),
+                    "entry_type": entry.get("entryType"),
                     "title": entry.get("title"),
                     "text": entry.get("text"),
                     "recipe_id": entry.get("recipeId"),
@@ -455,7 +458,10 @@ def mealplans_get_by_date(meal_date: str) -> str:
 
                 recipe = entry.get("recipe")
                 meals_by_type[entry_type].append({
+                    # Same per-item fields as mealplans_list, so a flattened list matches
                     "id": entry.get("id"),
+                    "date": entry.get("date"),
+                    "entry_type": entry.get("entryType"),
                     "title": entry.get("title"),
                     "text": entry.get("text"),
                     "recipe_id": entry.get("recipeId"),
