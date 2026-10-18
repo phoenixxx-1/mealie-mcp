@@ -10,6 +10,7 @@ import binascii
 import json
 import os
 import re
+import stat
 import time
 from typing import Any, Dict, Optional, Union
 from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
@@ -252,6 +253,167 @@ def decode_image_base64(value: str) -> bytes:
             f"image_base64 is not valid base64 ({e}). Send standard base64, optionally "
             "with a data:image/...;base64, prefix"
         ) from None
+
+
+# Folders image_path may read from, ':'-separated. Mount them into the
+# container read-only at the same path the agent sees.
+IMAGE_DIRS_ENV = "MEALIE_MCP_IMAGE_DIRS"
+_image_dirs_cache: Dict[str, list[str]] = {}
+
+
+def allowed_image_dirs() -> list[str]:
+    """The real paths of the folders in ``MEALIE_MCP_IMAGE_DIRS``.
+
+    Each entry is resolved with ``os.path.realpath``. Entries that don't
+    exist or aren't folders are ignored, and so is ``/``, which would allow
+    every file. An unset or empty variable gives an empty list, which
+    disables image_path. A non-empty result is resolved once and kept; an
+    empty one is looked up again next time, so a folder created after the
+    server started is picked up.
+    """
+    raw = os.getenv(IMAGE_DIRS_ENV, "")
+    if raw in _image_dirs_cache:
+        return _image_dirs_cache[raw]
+    roots = []
+    for entry in raw.split(":"):
+        entry = entry.strip()
+        if not entry:
+            continue
+        real = os.path.realpath(entry)
+        if real != os.path.sep and os.path.isdir(real) and real not in roots:
+            roots.append(real)
+    if roots:
+        _image_dirs_cache[raw] = roots
+    return roots
+
+
+def _show_path(path: Any) -> str:
+    """A path for an error message: quoted, and cut short if very long."""
+    shown = repr(path)
+    return shown if len(shown) <= 200 else shown[:197] + "..."
+
+
+def _open_beneath(root: str, real: str, shown: str) -> int:
+    """Open ``real`` (inside ``root``) one component at a time, never following a symlink.
+
+    ``real`` is already symlink-free, so a symlink met here means something
+    was swapped in after it was resolved; that open fails instead of being
+    followed. Returns a descriptor for the final component.
+    """
+    parts = [] if real == root else os.path.relpath(real, root).split(os.path.sep)
+    dir_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    file_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    walk = os.open in os.supports_dir_fd
+
+    try:
+        if not walk:
+            # No dir_fd support: only the final component is protected
+            return os.open(real, file_flags)
+        fd = os.open(root, dir_flags)
+        try:
+            for i, part in enumerate(parts):
+                flags = file_flags if i == len(parts) - 1 else dir_flags
+                next_fd = os.open(part, flags, dir_fd=fd)
+                os.close(fd)
+                fd = next_fd
+        except BaseException:
+            os.close(fd)
+            raise
+        return fd
+    except FileNotFoundError:
+        raise ValueError(f"image_path not found: {shown}") from None
+    except PermissionError:
+        raise ValueError(f"image_path can't be read (permission denied): {shown}") from None
+    except OSError as e:
+        # ELOOP / ENOTDIR: a symlink appeared on the path after it was resolved
+        raise ValueError(f"image_path can't be opened ({e.strerror}): {shown}") from None
+
+
+def read_image_path(path: Any) -> bytes:
+    """Read an image file from one of the allowed folders, read-only.
+
+    Checks, in order: image_path is enabled, the path is absolute, its real
+    path (symlinks followed) is inside an allowed folder, and the file is a
+    regular file of at most ``IMAGE_MAX_BYTES``. The file is opened from the
+    allowed folder one component at a time with ``O_NOFOLLOW``, so a symlink
+    swapped in anywhere on the path after the check makes the open fail, and
+    the type and size checks use ``fstat`` on the descriptor that is then
+    read. At most ``IMAGE_MAX_BYTES + 1`` bytes are read. Nothing at the path
+    is ever written, moved or deleted.
+
+    A hard link inside an allowed folder to a file elsewhere can't be told
+    apart from the path, so the folders should be ones only the user and
+    their agent can write to.
+
+    Raises:
+        ValueError: With a message naming the path (never its contents)
+    """
+    roots = allowed_image_dirs()
+    if not roots:
+        if os.getenv(IMAGE_DIRS_ENV, "").strip(": \t"):
+            raise ValueError(
+                f"image_path is disabled (no usable folder in {IMAGE_DIRS_ENV}: each entry is "
+                f"missing, not a folder, or /): {_show_path(os.getenv(IMAGE_DIRS_ENV))}"
+            )
+        raise ValueError(f"image_path is disabled ({IMAGE_DIRS_ENV} not set)")
+
+    shown = _show_path(path)
+    if not isinstance(path, str) or not path or "\x00" in path or not os.path.isabs(path):
+        raise ValueError(f"image_path must be an absolute path: {shown}")
+
+    real = os.path.realpath(path)
+    root = next((r for r in roots if os.path.commonpath([real, r]) == r), None)
+    if root is None:
+        raise ValueError(f"image_path is outside allowed folders: {shown}")
+
+    fd = _open_beneath(root, real, shown)
+    try:
+        # Checked on the raw descriptor: Python won't wrap a directory in a file object
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode):
+            raise ValueError(f"image_path is not a regular file: {shown}")
+        if info.st_size > IMAGE_MAX_BYTES:
+            raise ValueError(
+                f"image_path is too large ({_format_size(info.st_size)} > {_format_size(IMAGE_MAX_BYTES)}): {shown}"
+            )
+        handle = os.fdopen(fd, "rb")
+    except BaseException:
+        os.close(fd)
+        raise
+    with handle:
+        data = handle.read(IMAGE_MAX_BYTES + 1)
+    if len(data) > IMAGE_MAX_BYTES:
+        raise ValueError(f"image_path is too large (over {_format_size(IMAGE_MAX_BYTES)}): {shown}")
+    return data
+
+
+def load_image(image_base64: Optional[str] = None, image_path: Optional[str] = None) -> tuple[bytes, str]:
+    """Get image bytes from exactly one of base64 or an allowed file path.
+
+    Returns ``(data, source)`` with source ``"base64"`` or ``"path"``. The
+    bytes are checked with ``validate_image_bytes`` (format from magic bytes,
+    never the file extension) before they're returned.
+
+    Raises:
+        ValueError: If neither or both are given, or the image is unusable
+    """
+    given_base64 = image_base64 is not None and image_base64 != ""
+    given_path = image_path is not None and image_path != ""
+    if given_base64 == given_path:
+        raise ValueError(
+            "Give exactly one of image_path or image_base64"
+            + (" (both were given)" if given_base64 else " (neither was given)")
+        )
+    if given_path:
+        data, source = read_image_path(image_path), "path"
+        try:
+            validate_image_bytes(data)
+        except ValueError as e:
+            raise ValueError(f"image_path is an unsupported format: {_show_path(image_path)}. {e}") from None
+    else:
+        data, source = decode_image_base64(image_base64), "base64"
+        validate_image_bytes(data)
+    return data, source
 
 
 _TELEGRAM_BOT_TOKEN = re.compile(r"bot\d+(?::|%3A)[A-Za-z0-9_-]+", re.IGNORECASE)

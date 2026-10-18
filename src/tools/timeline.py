@@ -12,11 +12,11 @@ from typing import Optional
 
 # Handle imports for both module usage and standalone execution
 try:
-    from ..client import MealieClient, MealieAPIError, decode_image_base64, download_image, redact_url
+    from ..client import MealieClient, MealieAPIError, download_image, load_image, redact_url
 except ImportError:
     # Add parent directory to path for standalone execution
     sys.path.insert(0, str(Path(__file__).parent.parent))
-    from client import MealieClient, MealieAPIError, decode_image_base64, download_image, redact_url
+    from client import MealieClient, MealieAPIError, download_image, load_image, redact_url
 
 
 def timeline_list(
@@ -304,30 +304,38 @@ def timeline_update_image(
         }, indent=2)
 
 
-def timeline_image_upload(event_id: str, image_base64: str) -> str:
-    """Upload image bytes (base64) as a timeline event's photo.
+def timeline_image_upload(
+    event_id: str,
+    image_base64: Optional[str] = None,
+    image_path: Optional[str] = None
+) -> str:
+    """Attach an image to a timeline event, from a file path or base64.
 
     Sets the event's photo, replacing any it had. It does NOT change the
-    recipe's main image. The format is detected from the image's own bytes
-    (JPEG, PNG, WebP, HEIC or AVIF, at most 10 MB decoded); anything else is
-    an error and nothing is uploaded.
+    recipe's main image. Give exactly one of ``image_path`` (a file in a
+    folder listed in ``MEALIE_MCP_IMAGE_DIRS``) or ``image_base64``. The
+    format is detected from the image's own bytes (JPEG, PNG, WebP, HEIC or
+    AVIF, at most 10 MB); anything else is an error and nothing is uploaded.
 
     Args:
         event_id: Timeline event ID (UUID)
         image_base64: The image as standard base64, optionally with a
             ``data:image/...;base64,`` prefix
+        image_path: Absolute path to the image file, read-only
 
     Returns:
-        JSON string with upload confirmation or error details
+        JSON string with upload confirmation and ``source`` (``"path"`` or
+        ``"base64"``), or error details
     """
     try:
-        image_data = decode_image_base64(image_base64)  # validate before any request
+        image_data, source = load_image(image_base64, image_path)  # all checks before any request
         with MealieClient() as client:
             result = client.update_timeline_event_image(event_id, image_data)
             return json.dumps({
                 "success": True,
                 "message": f"Image attached to timeline event {event_id}",
                 **result,
+                "source": source,
             }, indent=2)
 
     except MealieAPIError as e:

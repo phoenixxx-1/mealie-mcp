@@ -666,18 +666,22 @@ def mealie_recipes_upload_image_from_url(slug: str, image_url: str) -> str:
 
 
 @mcp.tool()
-def mealie_recipes_image_upload(slug: str, image_base64: str) -> str:
-    """Upload an image file's bytes as the recipe's main image.
+def mealie_recipes_image_upload(
+    slug: str,
+    image_base64: str | None = None,
+    image_path: str | None = None,
+) -> str:
+    """Upload a photo as the recipe's main image.
 
-    REPLACES the recipe's single main image. Pass the image as base64, e.g. a
-    photo received as a file; it doesn't need to be hosted anywhere. The format
-    is detected from the image's own bytes, so no file name or extension is
-    needed: JPEG, PNG, WebP, HEIC (iPhone photos) or AVIF, at most 10 MB once
-    decoded. Anything else (bad base64, an HTML page, a GIF, an empty or
-    oversized file) is an error, nothing is uploaded and the current image is
-    kept.
-    If Mealie itself can't decode a file that passed these checks, the upload
-    fails; for a damaged WebP it may already have removed the current image.
+    REPLACES the recipe's single main image. Give exactly one of `image_path`
+    (preferred) or `image_base64`; neither or both is an error. The format is
+    detected from the image's own bytes, never the file name: JPEG, PNG, WebP,
+    HEIC (iPhone photos) or AVIF, at most 10 MB. Anything else (a missing file,
+    a path outside the allowed folders, a directory, bad base64, an HTML page,
+    a GIF, an empty or oversized file) is an error, nothing is uploaded and the
+    current image is kept. If Mealie itself can't decode a file that passed
+    these checks, the upload fails; for a damaged WebP it may already have
+    removed the current image.
 
     To log a "made it" photo without changing the main image, create a timeline
     event and use mealie_timeline_image_upload instead.
@@ -685,14 +689,19 @@ def mealie_recipes_image_upload(slug: str, image_base64: str) -> str:
     Args:
         slug: The recipe's slug identifier
         image_base64: The image as standard base64, optionally with a
-            `data:image/...;base64,` prefix
+            `data:image/...;base64,` prefix. Use only if image_path can't be used.
+        image_path: Absolute path to an image file the user sent (e.g. a
+            Telegram photo under .../cache/images/). Preferred over image_base64:
+            the bytes never pass through the model. The file must be inside a
+            folder the server allows (MEALIE_MCP_IMAGE_DIRS); it's only read.
 
     Returns:
         JSON string with the recipe's new image key (`image`), the previous key
-        (`previous_image`), the detected `format` and size in `bytes`. The new
-        key is read back from the recipe, confirming the image was replaced.
+        (`previous_image`), `source` ("path" or "base64"), the detected `format`
+        and size in `bytes`. The new key is read back from the recipe,
+        confirming the image was replaced.
     """
-    return recipes_image_upload(slug=slug, image_base64=image_base64)
+    return recipes_image_upload(slug=slug, image_base64=image_base64, image_path=image_path)
 
 
 @mcp.tool()
@@ -2314,29 +2323,38 @@ def mealie_timeline_update_image(event_id: str, image_url: str) -> str:
 
 
 @mcp.tool()
-def mealie_timeline_image_upload(event_id: str, image_base64: str) -> str:
-    """Upload an image file's bytes as a timeline event's photo.
+def mealie_timeline_image_upload(
+    event_id: str,
+    image_base64: str | None = None,
+    image_path: str | None = None,
+) -> str:
+    """Attach a photo to a timeline event.
 
     Sets the event's photo, replacing any it had. This does NOT change the
     recipe's main image; use mealie_recipes_image_upload for that. Typical use:
     log a "made it" photo by creating the event with mealie_timeline_create,
     then attaching the photo here.
 
-    Pass the image as base64; it doesn't need to be hosted anywhere. The format
-    is detected from the image's own bytes: JPEG, PNG, WebP, HEIC (iPhone
-    photos) or AVIF, at most 10 MB once decoded. Anything else is an error and
-    nothing is uploaded.
+    Give exactly one of `image_path` (preferred) or `image_base64`; neither or
+    both is an error. The format is detected from the image's own bytes: JPEG,
+    PNG, WebP, HEIC (iPhone photos) or AVIF, at most 10 MB. Anything else is an
+    error and nothing is uploaded.
 
     Args:
         event_id: Timeline event ID (UUID)
         image_base64: The image as standard base64, optionally with a
-            `data:image/...;base64,` prefix
+            `data:image/...;base64,` prefix. Use only if image_path can't be used.
+        image_path: Absolute path to an image file the user sent (e.g. a
+            Telegram photo under .../cache/images/). Preferred over image_base64:
+            the bytes never pass through the model. The file must be inside a
+            folder the server allows (MEALIE_MCP_IMAGE_DIRS); it's only read.
 
     Returns:
         JSON string with upload confirmation (the event is read back to confirm
-        it has an image), the detected `format` and size in `bytes`
+        it has an image), `source` ("path" or "base64"), the detected `format`
+        and size in `bytes`
     """
-    return timeline_image_upload(event_id=event_id, image_base64=image_base64)
+    return timeline_image_upload(event_id=event_id, image_base64=image_base64, image_path=image_path)
 
 
 # =============================================================================

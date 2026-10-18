@@ -27,7 +27,7 @@ A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server that e
 - `mealie_recipes_get_rating` - Get rating for a specific recipe
 - `mealie_recipes_get_ratings` - Get all ratings for the current user
 - `mealie_recipes_get_suggestions` - Get recipe suggestions based on preferences and history
-- `mealie_recipes_image_upload` - Replace a recipe's main image with image bytes (base64; JPEG, PNG, WebP, HEIC or AVIF, up to 10 MB)
+- `mealie_recipes_image_upload` - Replace a recipe's main image from a file path (`image_path`, see [Uploading images from files](#uploading-images-from-files)) or base64 (JPEG, PNG, WebP, HEIC or AVIF, up to 10 MB)
 - `mealie_recipes_list` - List all recipes with pagination
 - `mealie_recipes_remove_favorite` - Remove a recipe from the current user's favorites
 - `mealie_recipes_search` - Search for recipes in Mealie
@@ -61,7 +61,7 @@ A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server that e
 - `mealie_timeline_create` - Create a new timeline event for a recipe
 - `mealie_timeline_delete` - Delete a timeline event
 - `mealie_timeline_get` - Get a specific timeline event by ID
-- `mealie_timeline_image_upload` - Attach image bytes (base64) to a timeline event as its photo; does not change the recipe's main image
+- `mealie_timeline_image_upload` - Attach a photo to a timeline event from a file path or base64; does not change the recipe's main image
 - `mealie_timeline_list` - List all recipe timeline events with pagination
 - `mealie_timeline_update` - Update an existing timeline event
 - `mealie_timeline_update_image` - Attach an image downloaded from a URL to a timeline event; does not change the recipe's main image
@@ -296,6 +296,37 @@ Then add `mealie` to your `~/.claude/settings.json`:
   ]
 }
 ```
+
+### Uploading images from files
+
+`mealie_recipes_image_upload` and `mealie_timeline_image_upload` can read an
+image straight from a file with `image_path`, so the bytes never pass through
+the model. This is off until you list the folders it may read from in
+`MEALIE_MCP_IMAGE_DIRS` (`:`-separated). Mount each folder into the container
+**read-only at the same path** your agent sees, so the agent can pass the path
+exactly as it has it:
+
+```json
+"args": [
+  "run", "-i", "--rm",
+  "-e", "MEALIE_URL=https://your-mealie-instance.com",
+  "-e", "MEALIE_API_TOKEN=your-api-token-here",
+  "-v", "/home/you/agent/cache/images:/home/you/agent/cache/images:ro",
+  "-e", "MEALIE_MCP_IMAGE_DIRS=/home/you/agent/cache/images",
+  "ghcr.io/mdlopresti/mealie-mcp:latest"
+]
+```
+
+A path must be absolute, and its real location (after following symlinks)
+must be inside one of those folders; `..` tricks, a sibling folder with a
+similar name, or a symlink pointing elsewhere are refused. The file must be a
+regular file of at most 10 MB, and its format is read from its bytes, not its
+name. The server only ever reads the file. Folders in `MEALIE_MCP_IMAGE_DIRS`
+that don't exist are ignored, and `/` is refused.
+
+List only folders that just you and your agent can write to. Anyone who can
+write there could, for example, add a hard link to a photo stored elsewhere,
+and that can't be told apart from a file that really lives in the folder.
 
 ### 4. Test the Connection
 

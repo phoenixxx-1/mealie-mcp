@@ -24,7 +24,7 @@ try:
         MealieClient,
         MealieAPIError,
         SUBSTITUTIONS_NOT_SAVED_WARNING,
-        decode_image_base64,
+        load_image,
         normalize_substitutions,
         redact_url,
         resolve_substitutions,
@@ -38,7 +38,7 @@ except ImportError:
         MealieClient,
         MealieAPIError,
         SUBSTITUTIONS_NOT_SAVED_WARNING,
-        decode_image_base64,
+        load_image,
         normalize_substitutions,
         redact_url,
         resolve_substitutions,
@@ -1393,28 +1393,38 @@ def recipes_upload_image_from_url(slug: str, image_url: str) -> str:
         }, indent=2)
 
 
-def recipes_image_upload(slug: str, image_base64: str) -> str:
-    """Upload image bytes (base64) as the recipe's main image.
+def recipes_image_upload(
+    slug: str,
+    image_base64: Optional[str] = None,
+    image_path: Optional[str] = None
+) -> str:
+    """Upload an image as the recipe's main image, from a file path or base64.
 
-    Replaces the recipe's single main image. The format is detected from the
-    image's own bytes (JPEG, PNG, WebP, HEIC or AVIF, at most 10 MB decoded);
-    anything else is an error and nothing is uploaded. If Mealie can't decode a
-    file that passed these checks the upload fails; for a damaged WebP it may
-    already have removed the current image.
+    Replaces the recipe's single main image. Give exactly one of
+    ``image_path`` (a file in a folder listed in ``MEALIE_MCP_IMAGE_DIRS``) or
+    ``image_base64``. The format is detected from the image's own bytes (JPEG,
+    PNG, WebP, HEIC or AVIF, at most 10 MB); anything else is an error and
+    nothing is uploaded. If Mealie can't decode a file that passed these checks
+    the upload fails; for a damaged WebP it may already have removed the
+    current image.
 
     Args:
         slug: Recipe slug
         image_base64: The image as standard base64, optionally with a
             ``data:image/...;base64,`` prefix
+        image_path: Absolute path to the image file, read-only
 
     Returns:
-        JSON string with the recipe's new image key, or error details
+        JSON string with the recipe's new image key and ``source``
+        (``"path"`` or ``"base64"``), or error details
     """
     try:
-        image_data = decode_image_base64(image_base64)  # validate before any request
+        image_data, source = load_image(image_base64, image_path)  # all checks before any request
         with MealieClient() as client:
             result = client.upload_recipe_image(slug, image_data)
-            return _image_upload_result(result, f"Main image of recipe '{slug}' replaced")
+            return _image_upload_result(
+                {**result, "source": source}, f"Main image of recipe '{slug}' replaced"
+            )
     except MealieAPIError as e:
         return json.dumps({
             "error": str(e),
