@@ -92,6 +92,35 @@ SUBSTITUTIONS_NOT_SAVED_WARNING = (
 )
 
 
+# Keys a substitution entry may use. ``food`` mirrors the key an ingredient
+# line uses for its own food; the camelCase ones are what Mealie returns.
+SUBSTITUTION_FOOD_ID_KEYS = ("substitute_food_id", "substituteFoodId")
+SUBSTITUTION_FOOD_KEYS = ("substitute_food", "substituteFood", "food")
+SUBSTITUTION_KEYS = frozenset(SUBSTITUTION_FOOD_ID_KEYS + SUBSTITUTION_FOOD_KEYS + ("note",))
+
+
+def _substitute_food_ref(key: str, value: Any) -> tuple[Optional[str], Optional[str]]:
+    """Read ``(id, name)`` from a ``substitute_food``-style value.
+
+    ``None`` and ``""`` mean "not given". A dict must carry an ``id`` or a
+    ``name``; other keys on it (such as a full food object) are ignored.
+    """
+    if value is None:
+        return None, None
+    if isinstance(value, str):
+        return None, value.strip() or None
+    if isinstance(value, dict):
+        food_id = value.get("id") or None
+        name = str(value.get("name") or "").strip() or None
+        if not food_id and not name:
+            raise ValueError(f"Substitution '{key}' must include an 'id' or a 'name'")
+        return (str(food_id) if food_id else None), name
+    raise ValueError(
+        f"Substitution '{key}' must be a food name or a dict with an 'id' or 'name', "
+        f"got {type(value).__name__}"
+    )
+
+
 def normalize_substitutions(substitutions: Optional[list]) -> list[Dict[str, Optional[str]]]:
     """Validate substitution entries and reduce them to ``{food_id, food_name, note}``.
 
@@ -99,10 +128,15 @@ def normalize_substitutions(substitutions: Optional[list]) -> list[Dict[str, Opt
     both. Each entry here may be:
 
     - a plain string, taken as the substitute food's name
-    - a dict with ``substitute_food_id`` (or ``substituteFoodId``) and/or
-      ``substitute_food`` (or ``substituteFood``), the latter being a food name
-      or a ``{"id": ..., "name": ...}`` dict as Mealie returns it, plus an
-      optional ``note``
+    - a dict using only these keys:
+        - ``substitute_food`` (or ``food``, or Mealie's ``substituteFood``): a
+          food name, or a ``{"id": ..., "name": ...}`` dict
+        - ``substitute_food_id`` (or Mealie's ``substituteFoodId``)
+        - ``note``
+
+    Any other key is an error rather than being ignored, so a misspelt key
+    can never turn a food substitution into a note-only one. Keys that point
+    at different foods are an error too.
 
     Names still need resolving to IDs (see ``resolve_substitutions``); this
     function only validates, so it can run before any request is made.
@@ -122,17 +156,42 @@ def normalize_substitutions(substitutions: Optional[list]) -> list[Dict[str, Opt
         if isinstance(sub, str):
             food_name = sub.strip() or None
         elif isinstance(sub, dict):
-            food_id = sub.get("substitute_food_id", sub.get("substituteFoodId")) or None
-            food = sub.get("substitute_food", sub.get("substituteFood"))
-            if isinstance(food, dict):
-                food_id = food_id or food.get("id") or None
-                food_name = str(food.get("name") or "").strip() or None
-            elif isinstance(food, str):
-                food_name = food.strip() or None
-            elif food is not None:
+            unknown = sorted(str(key) for key in set(sub) - SUBSTITUTION_KEYS)
+            if unknown:
                 raise ValueError(
-                    "substitute_food must be a food name or a dict with an 'id' or 'name'"
+                    f"Unknown substitution key(s): {', '.join(unknown)}. Use "
+                    "substitute_food (a name or {\"id\", \"name\"}; 'food' also works), "
+                    "substitute_food_id and/or note."
                 )
+
+            ids: list[tuple[str, str]] = []
+            names: list[tuple[str, str]] = []
+            for key in SUBSTITUTION_FOOD_ID_KEYS:
+                value = sub.get(key)
+                if value is None or value == "":
+                    continue
+                if not isinstance(value, str):
+                    raise ValueError(f"Substitution '{key}' must be a string ID")
+                ids.append((key, value.strip()))
+            for key in SUBSTITUTION_FOOD_KEYS:
+                ref_id, ref_name = _substitute_food_ref(key, sub.get(key))
+                if ref_id:
+                    ids.append((key, ref_id))
+                if ref_name:
+                    names.append((key, ref_name))
+
+            if len({value for _, value in ids}) > 1:
+                raise ValueError(
+                    "Substitution keys point at different foods: "
+                    + ", ".join(f"{key}={value}" for key, value in ids)
+                )
+            if not ids and len({value.casefold() for _, value in names}) > 1:
+                raise ValueError(
+                    "Substitution keys name different foods: "
+                    + ", ".join(f"{key}={value!r}" for key, value in names)
+                )
+            food_id = ids[0][1] if ids else None
+            food_name = names[0][1] if names else None
 
             raw_note = sub.get("note")
             if raw_note is not None and not isinstance(raw_note, str):
@@ -147,7 +206,7 @@ def normalize_substitutions(substitutions: Optional[list]) -> list[Dict[str, Opt
             raise ValueError("A substitution needs a substitute food, a note, or both")
 
         normalized.append({
-            "food_id": str(food_id) if food_id else None,
+            "food_id": food_id,
             "food_name": food_name,
             "note": note,
         })

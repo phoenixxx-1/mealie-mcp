@@ -111,7 +111,7 @@ class TestNormalizeSubstitutions:
     def test_bad_types_raise(self):
         with pytest.raises(ValueError, match="must be a food name or a dict"):
             normalize_substitutions([42])
-        with pytest.raises(ValueError, match="substitute_food must be"):
+        with pytest.raises(ValueError, match="'substitute_food' must be"):
             normalize_substitutions([{"substitute_food": 42}])
         with pytest.raises(ValueError, match="note must be a string"):
             normalize_substitutions([{"substitute_food": "x", "note": 3}])
@@ -570,3 +570,187 @@ class TestStructuredIngredientSubstitutions:
             recipes_update_structured_ingredients("test-recipe", parsed)
 
         assert self._sent(mock)[0]["substitutions"] == []
+
+
+class TestSubstitutionKeys:
+    """Unknown keys fail loudly; `food` is an alias for `substitute_food`."""
+
+    def test_food_alias_with_id_and_name(self):
+        result = normalize_substitutions([
+            {"food": {"id": "food-tomato", "name": "chopped tomato"}, "note": "120g tinned"}
+        ])
+        assert result == [{"food_id": "food-tomato", "food_name": "chopped tomato", "note": "120g tinned"}]
+
+    def test_food_alias_with_name(self):
+        assert normalize_substitutions([{"food": "passata"}]) == [
+            {"food_id": None, "food_name": "passata", "note": None}
+        ]
+
+    def test_food_alias_accepts_a_full_food_object(self):
+        full = {**TOMATO, "labelId": None, "extras": {}}
+        assert normalize_substitutions([{"food": full}])[0]["food_id"] == "food-tomato"
+
+    def test_unknown_key_is_rejected(self):
+        with pytest.raises(ValueError, match="Unknown substitution key.*substitue_food"):
+            normalize_substitutions([{"substitue_food": "passata", "note": "x"}])
+        with pytest.raises(ValueError, match="Unknown substitution key.*foodId"):
+            normalize_substitutions([{"foodId": "food-tomato"}])
+
+    def test_keys_naming_different_foods_are_rejected(self):
+        with pytest.raises(ValueError, match="name different foods"):
+            normalize_substitutions([{"substitute_food": "passata", "food": "butter"}])
+        with pytest.raises(ValueError, match="point at different foods"):
+            normalize_substitutions([{"substitute_food_id": "a", "food": {"id": "b"}}])
+
+    def test_agreeing_keys_are_fine(self):
+        assert normalize_substitutions([
+            {"substitute_food": "Passata", "food": "passata"},
+            {"substitute_food_id": "a", "food": {"id": "a", "name": "A"}},
+        ]) == [
+            {"food_id": None, "food_name": "Passata", "note": None},
+            {"food_id": "a", "food_name": "A", "note": None},
+        ]
+
+    def test_food_dict_without_id_or_name_is_rejected(self):
+        with pytest.raises(ValueError, match="'food' must include an 'id' or a 'name'"):
+            normalize_substitutions([{"food": {}, "note": "x"}])
+
+    def test_non_string_id_is_rejected(self):
+        with pytest.raises(ValueError, match="must be a string ID"):
+            normalize_substitutions([{"substitute_food_id": 7}])
+
+    def test_empty_food_value_still_allows_note_only(self):
+        """Mealie's own UI sends "" for an unset food; that's not a food-bearing entry."""
+        assert normalize_substitutions([{"substitute_food": "", "note": "or skip it"}]) == [
+            {"food_id": None, "food_name": None, "note": "or skip it"}
+        ]
+
+
+class TestLineAcceptance:
+    """Acceptance cases for substitutions on a structured ingredient line."""
+
+    @staticmethod
+    def _run(substitutions):
+        mock = TestStructuredIngredientSubstitutions._client()
+        parsed = [{"ingredient": {
+            "food": {"id": "food-passata", "name": "passata"}, "substitutions": substitutions,
+        }}]
+        with patch("src.tools.recipes.MealieClient", return_value=mock):
+            data = json.loads(recipes_update_structured_ingredients("test-recipe", parsed))
+        sent = mock.update_recipe_ingredients.call_args[0][1] if mock.update_recipe_ingredients.called else None
+        return data, sent, mock
+
+    def test_food_key_keeps_its_food(self):
+        _, sent, mock = self._run([{"food": {"id": "food-tomato", "name": "chopped tomato"}, "note": "x"}])
+        assert sent[0]["substitutions"] == [{"substituteFoodId": "food-tomato", "note": "x"}]
+        mock.get_food_name_index.assert_not_called()
+
+    def test_substitute_food_name_unchanged(self):
+        _, sent, _ = self._run([{"substitute_food": "chopped tomatoes", "note": "x"}])
+        assert sent[0]["substitutions"] == [{"substituteFoodId": "food-tomato", "note": "x"}]
+
+    def test_substitute_food_id_needs_no_lookup(self):
+        _, sent, mock = self._run([{"substitute_food_id": "food-tomato"}])
+        assert sent[0]["substitutions"] == [{"substituteFoodId": "food-tomato", "note": None}]
+        mock.get_food_name_index.assert_not_called()
+
+    def test_unknown_key_fails_without_updating(self):
+        data, sent, mock = self._run([{"substitue_food": "chopped tomatoes", "note": "x"}])
+        assert "Unknown substitution key" in data["error"]
+        assert sent is None
+        mock.create_food.assert_not_called()
+
+
+class TestAdvertisedSchemas:
+    """The substitution keys must be discoverable from the MCP tool schemas."""
+
+    @staticmethod
+    def _schemas():
+        import asyncio
+        import sys
+        from pathlib import Path
+
+        sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+        import server
+        from fastmcp import Client
+
+        async def fetch():
+            async with Client(server.mcp) as client:
+                return {
+                    # input_schema in MCP SDK v2, inputSchema before it
+                    tool.name: getattr(tool, "input_schema", None) or tool.inputSchema
+                    for tool in await client.list_tools()
+                }
+
+        return asyncio.run(fetch())
+
+    @staticmethod
+    def _entry_schema(substitutions_schema):
+        """Find the object branch of a substitutions parameter's item schema."""
+        def walk(node):
+            if isinstance(node, dict):
+                if node.get("type") == "object" and "substitute_food" in node.get("properties", {}):
+                    return node
+                for value in node.values():
+                    found = walk(value)
+                    if found:
+                        return found
+            elif isinstance(node, list):
+                for value in node:
+                    found = walk(value)
+                    if found:
+                        return found
+            return None
+        return walk(substitutions_schema)
+
+    def test_substitution_entries_are_declared_and_closed(self):
+        schemas = self._schemas()
+        for name in ("mealie_foods_create", "mealie_foods_update",
+                     "mealie_foods_substitutions_add", "mealie_foods_substitutions_remove"):
+            entry = self._entry_schema(schemas[name]["properties"]["substitutions"])
+            assert entry is not None, name
+            assert entry["additionalProperties"] is False, name
+            assert {"substitute_food", "substitute_food_id", "food", "note"} <= set(entry["properties"]), name
+
+    def test_parsed_ingredient_items_declare_substitutions(self):
+        item = self._schemas()["mealie_recipes_update_structured_ingredients"]["properties"]["parsed_ingredients"]["items"]
+        assert item["additionalProperties"] is True
+        assert {"ingredient", "substitutions"} <= set(item["properties"])
+        entry = self._entry_schema(item["properties"]["substitutions"])
+        assert entry is not None and entry["additionalProperties"] is False
+
+    def test_tool_call_through_mcp_passes_lines_through_and_rejects_bad_keys(self):
+        import asyncio
+
+        self._schemas()  # puts src on the path and imports server
+        import server
+        from fastmcp import Client
+
+        mock = TestStructuredIngredientSubstitutions._client()
+        line = {
+            "input": "1 cup passata",
+            "confidence": {"average": 0.9},
+            "ingredient": {"quantity": 1, "food": {"id": "food-passata", "name": "passata"},
+                           "substitutions": []},
+            "substitutions": [{"food": {"id": "food-tomato", "name": "chopped tomato"}, "note": "x"}],
+        }
+
+        async def call(lines):
+            async with Client(server.mcp) as client:
+                return await client.call_tool(
+                    "mealie_recipes_update_structured_ingredients",
+                    {"slug": "test-recipe", "parsed_ingredients": lines},
+                    raise_on_error=False,
+                )
+
+        with patch("tools.recipes.MealieClient", return_value=mock):
+            asyncio.run(call([line]))
+            sent = mock.update_recipe_ingredients.call_args[0][1]
+            assert sent[0]["quantity"] == 1
+            assert sent[0]["substitutions"] == [{"substituteFoodId": "food-tomato", "note": "x"}]
+
+            mock.update_recipe_ingredients.reset_mock()
+            bad = {**line, "substitutions": [{"substitue_food": "passata"}]}
+            result = asyncio.run(call([bad]))
+            assert result.is_error
+            mock.update_recipe_ingredients.assert_not_called()

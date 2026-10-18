@@ -88,7 +88,8 @@ def foods_create(
         substitutions: Optional standing substitutions for this food (e.g.
             [{"substitute_food": "vegan block", "note": "for a dairy-free bake"}]).
             Each entry is a substitute food name, or a dict with
-            substitute_food_id or substitute_food plus an optional note.
+            substitute_food (or food), substitute_food_id and/or note; see
+            normalize_substitutions for the full rules.
 
     Returns:
         JSON string with created food details
@@ -729,9 +730,9 @@ def _substitutions_result(food: dict, message: str, expect_some: bool = False) -
 def foods_substitutions_add(food_id: str, substitutions: list) -> str:
     """Add one or more standing substitutions to a food, keeping the existing ones.
 
-    Each entry is a substitute food name, or a dict with substitute_food_id or
-    substitute_food (a name) plus an optional note; a note on its own is
-    allowed too. Substitute food names must match an existing food name,
+    Each entry is a substitute food name, or a dict with substitute_food (or
+    food), substitute_food_id and/or note; a note on its own is allowed too,
+    and unknown keys are an error. Substitute food names must match an existing food name,
     plural name or alias. A substitute the food already has keeps its place,
     and its note is replaced only if a new one is given, so this is safe to
     call repeatedly.

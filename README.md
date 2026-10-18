@@ -73,11 +73,13 @@ Mealie 3.26.0 or later.
 - `mealie_foods_substitutions_add` - Add one or more standing substitutions to a food, keeping the existing ones
 - `mealie_foods_substitutions_remove` - Remove one or more standing substitutions from a food
 
-Each substitution is a substitute food name, or a dict with
-`substitute_food_id` or `substitute_food` (a name) plus an optional `note`. A
-note on its own is fine too, e.g. `{"note": "water and a stock cube"}`. Names
-are matched case-insensitively against existing food names, plural names and
-aliases.
+Each substitution is a substitute food name, or a dict with `substitute_food`
+(a name or `{"id", "name"}`; `food` works too) or `substitute_food_id`, plus an
+optional `note`. A note on its own is fine too, e.g.
+`{"note": "water and a stock cube"}`. Any other key is an error, so a misspelt
+key can't quietly save a note-only substitution. Names are matched
+case-insensitively against existing food names, plural names and aliases. The
+accepted keys are part of each tool's input schema.
 
 - `mealie_foods_create` and `mealie_foods_update` accept a `substitutions` list,
   which *replaces* the whole set (`[]` clears it, leaving it out changes
