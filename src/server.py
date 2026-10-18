@@ -388,7 +388,8 @@ def mealie_recipes_update_structured_ingredients(
             - note: optional string (e.g., "sifted")
             - display: optional string for human-readable format
             - substitutions: optional list of ingredient options for this line, set on
-              the ingredient or beside it on a parser result. Each entry is a food name
+              the ingredient or beside it on a parser result (beside it wins, since the
+            parser already returns an empty list on the ingredient). Each entry is a food name
               ("chopped tomatoes"), or a dict with `substitute_food_id` or
               `substitute_food` (a name) plus an optional `note`, e.g.
               {"substitute_food": "vegan block", "note": "for a dairy-free version"}.
@@ -407,7 +408,8 @@ def mealie_recipes_update_structured_ingredients(
         JSON string with updated recipe details, plus `created_foods` and
         `created_units` (name -> id) for anything that was created, and
         `saved_substitutions` (per line, with the resolved substitute food name)
-        when any line has substitutions
+        when any line has substitutions, or a `warning` if substitutions were sent
+        but Mealie saved none (a server without substitution support)
 
     Example workflow:
         1. Parse ingredients:
@@ -1633,7 +1635,7 @@ def mealie_foods_substitutions_remove(food_id: str, substitutions: list[dict | s
         substitutions: Substitutions to remove. An entry naming a substitute food
             (a name, or a dict with `substitute_food_id` or `substitute_food`)
             removes that food's substitution whatever its note; names match
-            case-insensitively. A note-only entry ({"note": "..."}) removes
+            case-insensitively against food names, plural names and aliases. A note-only entry ({"note": "..."}) removes
             note-only substitutions with that note. Entries that match nothing
             are ignored.
 

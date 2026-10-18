@@ -23,6 +23,7 @@ try:
     from ..client import (
         MealieClient,
         MealieAPIError,
+        SUBSTITUTIONS_NOT_SAVED_WARNING,
         normalize_substitutions,
         resolve_substitutions,
         substitution_summary,
@@ -34,6 +35,7 @@ except ImportError:
     from client import (
         MealieClient,
         MealieAPIError,
+        SUBSTITUTIONS_NOT_SAVED_WARNING,
         normalize_substitutions,
         resolve_substitutions,
         substitution_summary,
@@ -649,14 +651,16 @@ def _line_substitutions(parsed: Any) -> Optional[list]:
     """Validate the substitutions on one parsed ingredient line.
 
     They may sit on the ingredient itself or, for parser output, next to it on
-    the wrapper dict. Returns None when the line sets no substitutions.
+    the wrapper dict. The wrapper wins when both are present, because Mealie's
+    parser already returns ``"substitutions": []`` on every ingredient.
+    Returns None when the line sets no substitutions.
     """
     if not isinstance(parsed, dict):
         return None
     ingredient = parsed.get("ingredient") if "ingredient" in parsed else parsed
-    subs = ingredient.get("substitutions") if isinstance(ingredient, dict) else None
-    if subs is None and ingredient is not parsed:
-        subs = parsed.get("substitutions")
+    subs = parsed.get("substitutions") if ingredient is not parsed else None
+    if subs is None and isinstance(ingredient, dict):
+        subs = ingredient.get("substitutions")
     if subs is None:
         return None
     if not isinstance(subs, list):
@@ -773,6 +777,7 @@ def recipes_update_structured_ingredients(
             # after the foods above were created so they can be named too
             index: dict = {}
             unmatched_substitutes: list[str] = []
+            failed_substitutes: list[str] = []
             if any(subs and substitutions_need_lookup(subs) for subs in line_substitutions):
                 index = client.get_food_name_index()
                 for subs in line_substitutions:
@@ -780,17 +785,41 @@ def recipes_update_structured_ingredients(
                         name = sub["food_name"]
                         if not name or sub["food_id"] or name.casefold() in index:
                             continue
-                        if create_missing_foods:
+                        if not create_missing_foods:
+                            if name not in unmatched_substitutes:
+                                unmatched_substitutes.append(name)
+                            continue
+                        try:
                             new_food = client.create_food(name)
-                            created_foods[name] = new_food.get("id")
-                            index[name.casefold()] = {"id": new_food.get("id"), "name": name}
-                        elif name not in unmatched_substitutes:
-                            unmatched_substitutes.append(name)
+                        except MealieAPIError:
+                            new_food = {}
+                        if new_food.get("id"):
+                            created_foods[name] = new_food["id"]
+                            index[name.casefold()] = {"id": new_food["id"], "name": name}
+                        elif name not in failed_substitutes:
+                            failed_substitutes.append(name)
 
-            if unmatched_foods or unmatched_substitutes:
+            if failed_substitutes:
+                # Unlike a line's own food, a substitute can't fall back to a bare name
                 return json.dumps({
                     "error": (
-                        f"{len(unmatched_foods) + len(unmatched_substitutes)} food(s) did not "
+                        f"Could not create {len(failed_substitutes)} substitute food(s); "
+                        "the recipe was not updated"
+                    ),
+                    "failed_substitute_foods": failed_substitutes,
+                    "created_foods": created_foods,
+                    "created_units": created_units,
+                    "hint": (
+                        "Create or find the food with mealie_foods_create / "
+                        "mealie_foods_list(search=...) and pass its substitute_food_id."
+                    )
+                }, indent=2)
+
+            if unmatched_foods or unmatched_substitutes:
+                unmatched_count = len(set(unmatched_foods) | set(unmatched_substitutes))
+                return json.dumps({
+                    "error": (
+                        f"{unmatched_count} food(s) did not "
                         "match an existing food and create_missing_foods is False; the recipe "
                         "was not updated"
                     ),
@@ -937,6 +966,8 @@ def recipes_update_structured_ingredients(
             ]
             if saved_substitutions:
                 result["saved_substitutions"] = saved_substitutions
+            elif any(line_payloads):
+                result["warning"] = SUBSTITUTIONS_NOT_SAVED_WARNING
             return json.dumps(result, indent=2)
 
     except MealieAPIError as e:

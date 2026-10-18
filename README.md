@@ -158,6 +158,8 @@ aliases.
   on each ingredient line. Missing substitute foods are created, or reported as
   `unmatched_substitute_foods` when `create_missing_foods=False`. The response
   includes `saved_substitutions`, read back from Mealie.
+- If Mealie saves none of the substitutions sent (a server version without
+  substitution support), the response carries a `warning`.
 - `mealie_recipes_get` and `mealie_foods_get` return each substitution with
   its resolved `substituteFood`.
 

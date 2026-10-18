@@ -15,11 +15,23 @@ from typing import Optional
 
 # Handle imports for both module usage and standalone execution
 try:
-    from ..client import MealieClient, MealieAPIError, alias_names, substitution_summary
+    from ..client import (
+        MealieClient,
+        MealieAPIError,
+        SUBSTITUTIONS_NOT_SAVED_WARNING,
+        alias_names,
+        substitution_summary,
+    )
 except ImportError:
     # Add parent directory to path for standalone execution
     sys.path.insert(0, str(Path(__file__).parent.parent))
-    from client import MealieClient, MealieAPIError, alias_names, substitution_summary
+    from client import (
+        MealieClient,
+        MealieAPIError,
+        SUBSTITUTIONS_NOT_SAVED_WARNING,
+        alias_names,
+        substitution_summary,
+    )
 
 
 
@@ -84,11 +96,14 @@ def foods_create(
     try:
         with MealieClient() as client:
             result = client.create_food(name, description, label_id, aliases, substitutions)
-            return json.dumps({
+            response = {
                 "success": True,
                 "message": "Food created successfully",
                 "food": result
-            }, indent=2)
+            }
+            if substitutions and not result.get("substitutions"):
+                response["warning"] = SUBSTITUTIONS_NOT_SAVED_WARNING
+            return json.dumps(response, indent=2)
 
     except MealieAPIError as e:
         error_result = {
@@ -166,11 +181,14 @@ def foods_update(
             food = client.update_food(
                 food_id, name, description, label_id, aliases, substitutions
             )
-            return json.dumps({
+            response = {
                 "success": True,
                 "message": "Food updated successfully",
                 "food": food
-            }, indent=2)
+            }
+            if substitutions and not food.get("substitutions"):
+                response["warning"] = SUBSTITUTIONS_NOT_SAVED_WARNING
+            return json.dumps(response, indent=2)
 
     except MealieAPIError as e:
         error_result = {
@@ -695,14 +713,17 @@ def units_aliases_remove(unit_id: str, aliases: list[str]) -> str:
 # Substitution Management
 # -----------------------------------------------------------------------------
 
-def _substitutions_result(food: dict, message: str) -> str:
-    return json.dumps({
+def _substitutions_result(food: dict, message: str, expect_some: bool = False) -> str:
+    result = {
         "success": True,
         "message": message,
         "food_id": food.get("id"),
         "name": food.get("name"),
         "substitutions": substitution_summary(food)
-    }, indent=2)
+    }
+    if expect_some and not result["substitutions"]:
+        result["warning"] = SUBSTITUTIONS_NOT_SAVED_WARNING
+    return json.dumps(result, indent=2)
 
 
 def foods_substitutions_add(food_id: str, substitutions: list) -> str:
@@ -726,7 +747,9 @@ def foods_substitutions_add(food_id: str, substitutions: list) -> str:
         with MealieClient() as client:
             food = client.add_food_substitutions(food_id, substitutions)
             return _substitutions_result(
-                food, "Food substitutions updated (existing substitutions preserved)"
+                food,
+                "Food substitutions updated (existing substitutions preserved)",
+                expect_some=bool(substitutions)
             )
 
     except MealieAPIError as e:
@@ -749,7 +772,8 @@ def foods_substitutions_remove(food_id: str, substitutions: list) -> str:
     """Remove one or more standing substitutions from a food.
 
     An entry naming a substitute food (by substitute_food_id, or by name,
-    case-insensitively) removes that food's substitution whatever its note.
+    plural name or alias, case-insensitively) removes that food's
+    substitution whatever its note.
     A note-only entry removes note-only substitutions with that note.
     Entries that match nothing are ignored.
 

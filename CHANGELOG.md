@@ -15,7 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added per-line `substitutions` to `mealie_recipes_update_structured_ingredients`; substitute foods can be given by ID or by name, names resolve against food names, plural names and aliases, and `create_missing_foods` applies to them
 - Added `saved_substitutions` to the `mealie_recipes_update_structured_ingredients` response, and `unmatched_substitute_foods` to its `create_missing_foods=False` error
 - Added `add_food_substitutions`, `remove_food_substitutions`, `list_all_foods`, `get_food_name_index` and `substitution_payload` methods to MealieClient, plus `normalize_substitutions`, `resolve_substitutions`, `food_name_index` and `substitution_summary` helpers
-- Added 31 unit tests covering substitution validation, name resolution, the client read-modify-write methods (including that invalid input is rejected before any request), and the tool wrappers
+- Added a `warning` to substitution writes when Mealie saves none of the substitutions sent, which is what a server without substitution support does
+- Added 39 unit tests covering substitution validation, name resolution, the client read-modify-write methods (including that invalid input is rejected before any request), and the tool wrappers
 - Added ingredient alias management with 6 new MCP tools
 - Added `mealie_foods_aliases_list` tool to list the aliases registered for a food
 - Added `mealie_foods_aliases_add` tool to add aliases to a food while keeping existing ones

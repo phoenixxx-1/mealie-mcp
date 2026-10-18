@@ -14,6 +14,8 @@ import respx
 from httpx import Response
 
 from src.client import (
+    SUBSTITUTIONS_NOT_SAVED_WARNING,
+    MealieAPIError,
     MealieClient,
     food_name_index,
     normalize_substitutions,
@@ -136,6 +138,19 @@ class TestResolveSubstitutions:
             {"substituteFoodId": None, "note": "or skip it"},
         ]
         assert unmatched == ["unicorn"]
+
+    def test_duplicate_food_keeps_first_entry(self):
+        subs = normalize_substitutions([
+            {"substitute_food_id": "food-butter", "note": "first"},
+            {"substitute_food": "butter", "note": "second"},
+            {"note": "a"}, {"note": "a"},
+        ])
+        payload, _ = resolve_substitutions(subs, food_name_index(ALL_FOODS))
+        assert payload == [
+            {"substituteFoodId": "food-butter", "note": "first"},
+            {"substituteFoodId": None, "note": "a"},
+            {"substituteFoodId": None, "note": "a"},
+        ]
 
     def test_id_wins_over_name(self):
         subs = normalize_substitutions([{"substitute_food_id": "given", "substitute_food": "butter"}])
@@ -282,8 +297,56 @@ class TestFoodSubstitutionClient:
         ]
 
     @respx.mock
-    def test_remove_by_name_id_and_note(self):
+    def test_self_substitution_is_rejected_before_writing(self):
+        mock_all_foods()
+        get = respx.get(f"{BASE_URL}/api/foods/food-butter")
+        put = respx.put(f"{BASE_URL}/api/foods/food-butter")
+        client = MealieClient(BASE_URL, "token")
+
+        with pytest.raises(ValueError, match="substituted with itself"):
+            client.update_food("food-butter", substitutions=[{"substitute_food_id": "food-butter"}])
+        with pytest.raises(ValueError, match="substituted with itself"):
+            client.add_food_substitutions("food-butter", ["Butter"])
+
+        assert not get.called
+        assert not put.called
+
+    @respx.mock
+    def test_remove_by_plural_name_and_alias(self):
+        mock_all_foods()
+        respx.get(f"{BASE_URL}/api/foods/food-butter").mock(
+            return_value=Response(200, json=food_with([saved_sub(VEGAN_BLOCK), saved_sub(TOMATO)]))
+        )
+        put = respx.put(f"{BASE_URL}/api/foods/food-butter").mock(
+            return_value=Response(200, json=food_with([]))
+        )
+
+        MealieClient(BASE_URL, "token").remove_food_substitutions(
+            "food-butter", ["plant butter", "Chopped Tomatoes"]
+        )
+
+        assert json.loads(put.calls[0].request.content)["substitutions"] == []
+
+    @respx.mock
+    def test_remove_by_id_and_note_skips_the_food_lookup(self):
         all_foods = mock_all_foods()
+        respx.get(f"{BASE_URL}/api/foods/food-butter").mock(
+            return_value=Response(200, json=food_with([saved_sub(TOMATO), saved_sub(note="or oil")]))
+        )
+        put = respx.put(f"{BASE_URL}/api/foods/food-butter").mock(
+            return_value=Response(200, json=food_with([]))
+        )
+
+        MealieClient(BASE_URL, "token").remove_food_substitutions(
+            "food-butter", [{"substitute_food_id": "food-tomato"}, {"note": "OR OIL"}]
+        )
+
+        assert not all_foods.called
+        assert json.loads(put.calls[0].request.content)["substitutions"] == []
+
+    @respx.mock
+    def test_remove_by_name_id_and_note(self):
+        mock_all_foods()
         respx.get(f"{BASE_URL}/api/foods/food-butter").mock(
             return_value=Response(200, json=food_with([
                 saved_sub(VEGAN_BLOCK, "note"), saved_sub(TOMATO),
@@ -298,8 +361,6 @@ class TestFoodSubstitutionClient:
             "VEGAN BLOCK", {"substitute_food_id": "food-tomato"}, {"note": "Or Oil"}, "unicorn",
         ])
 
-        # Names are matched against the food's own substitutes, so no library fetch
-        assert not all_foods.called
         assert json.loads(put.calls[0].request.content)["substitutions"] == [
             {"substituteFoodId": None, "note": "or lard"}
         ]
@@ -328,6 +389,20 @@ class TestFoodSubstitutionTools:
 
         assert data["success"] is True
         assert data["substitutions"] == []
+
+    def test_warns_when_mealie_saves_no_substitutions(self):
+        """An older Mealie drops the unknown field; say so instead of claiming success quietly."""
+        mock = create_mock_client()
+        mock.update_food.return_value = {"id": "food-butter", "name": "butter"}
+        mock.add_food_substitutions.return_value = {"id": "food-butter", "name": "butter"}
+        with patch("src.tools.foods.MealieClient", return_value=mock):
+            updated = json.loads(foods_update("food-butter", substitutions=["vegan block"]))
+            cleared = json.loads(foods_update("food-butter", substitutions=[]))
+            added = json.loads(foods_substitutions_add("food-butter", ["vegan block"]))
+
+        assert updated["warning"] == SUBSTITUTIONS_NOT_SAVED_WARNING
+        assert "warning" not in cleared
+        assert added["warning"] == SUBSTITUTIONS_NOT_SAVED_WARNING
 
     def test_validation_error_is_reported_plainly(self):
         mock = create_mock_client()
@@ -393,11 +468,11 @@ class TestStructuredIngredientSubstitutions:
         }]
 
     def test_substitutions_beside_parser_result(self):
-        """Substitutions may sit on the parser wrapper next to 'ingredient'."""
+        """Substitutions on the parser wrapper win over the parser's own empty list."""
         mock = self._client()
         parsed = [{
             "input": "50g butter",
-            "ingredient": {"food": {"id": "food-butter", "name": "butter"}},
+            "ingredient": {"food": {"id": "food-butter", "name": "butter"}, "substitutions": []},
             "substitutions": [{"substitute_food_id": "food-vegan"}],
         }]
         with patch("src.tools.recipes.MealieClient", return_value=mock):
@@ -418,6 +493,46 @@ class TestStructuredIngredientSubstitutions:
         mock.create_food.assert_called_once_with("oat cream")
         assert data["created_foods"] == {"oat cream": "food-new"}
         assert self._sent(mock)[0]["substitutions"] == [{"substituteFoodId": "food-new", "note": None}]
+
+    def test_substitute_can_name_a_food_created_in_the_same_call(self):
+        mock = self._client()
+        mock.create_food.return_value = {"id": "food-new", "name": "oat cream"}
+        mock.get_food_name_index.return_value = {
+            **food_name_index(ALL_FOODS), "oat cream": {"id": "food-new", "name": "oat cream"},
+        }
+        parsed = [
+            {"ingredient": {"food": {"name": "oat cream"}}},
+            {"ingredient": {"food": {"id": "food-butter", "name": "butter"}, "substitutions": ["oat cream"]}},
+        ]
+        with patch("src.tools.recipes.MealieClient", return_value=mock):
+            recipes_update_structured_ingredients("test-recipe", parsed)
+
+        mock.create_food.assert_called_once_with("oat cream")
+        assert self._sent(mock)[1]["substitutions"] == [{"substituteFoodId": "food-new", "note": None}]
+
+    def test_failed_substitute_create_stops_the_update(self):
+        mock = self._client()
+        mock.create_food.side_effect = MealieAPIError("conflict", status_code=409)
+        parsed = [{"ingredient": {
+            "food": {"id": "food-cream", "name": "cream"}, "substitutions": ["oat cream"],
+        }}]
+        with patch("src.tools.recipes.MealieClient", return_value=mock):
+            data = json.loads(recipes_update_structured_ingredients("test-recipe", parsed))
+
+        assert data["failed_substitute_foods"] == ["oat cream"]
+        mock.update_recipe_ingredients.assert_not_called()
+
+    def test_warns_when_mealie_saves_no_substitutions(self):
+        mock = self._client([{"display": "butter"}])
+        parsed = [{"ingredient": {
+            "food": {"id": "food-butter", "name": "butter"},
+            "substitutions": [{"substitute_food_id": "food-vegan"}],
+        }}]
+        with patch("src.tools.recipes.MealieClient", return_value=mock):
+            data = json.loads(recipes_update_structured_ingredients("test-recipe", parsed))
+
+        assert data["success"] is True
+        assert data["warning"] == SUBSTITUTIONS_NOT_SAVED_WARNING
 
     def test_missing_substitute_is_reported_when_flag_off(self):
         mock = self._client()
