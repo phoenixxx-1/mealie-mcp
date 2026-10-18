@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Added ingredient substitution support for recipe ingredient lines and foods (Mealie 3.x)
+- Added ingredient substitution support for recipe ingredient lines and foods (requires Mealie 3.26.0 or later)
 - Added `mealie_foods_substitutions_add` tool to add standing substitutions to a food while keeping existing ones
 - Added `mealie_foods_substitutions_remove` tool to remove standing substitutions from a food
 - Added an optional `substitutions` parameter to `mealie_foods_create` and `mealie_foods_update` (replaces the full substitution set; `[]` clears it)

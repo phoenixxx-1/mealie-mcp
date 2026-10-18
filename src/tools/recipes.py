@@ -781,6 +781,8 @@ def recipes_update_structured_ingredients(
             if any(subs and substitutions_need_lookup(subs) for subs in line_substitutions):
                 index = client.get_food_name_index()
                 for subs in line_substitutions:
+                    if failed_substitutes:
+                        break
                     for sub in subs or []:
                         name = sub["food_name"]
                         if not name or sub["food_id"] or name.casefold() in index:
@@ -796,8 +798,10 @@ def recipes_update_structured_ingredients(
                         if new_food.get("id"):
                             created_foods[name] = new_food["id"]
                             index[name.casefold()] = {"id": new_food["id"], "name": name}
-                        elif name not in failed_substitutes:
+                        else:
+                            # Stop here so a refused update leaves fewer new foods behind
                             failed_substitutes.append(name)
+                            break
 
             if failed_substitutes:
                 # Unlike a line's own food, a substitute can't fall back to a bare name

@@ -389,8 +389,8 @@ def mealie_recipes_update_structured_ingredients(
             - display: optional string for human-readable format
             - substitutions: optional list of ingredient options for this line, set on
               the ingredient or beside it on a parser result (beside it wins, since the
-            parser already returns an empty list on the ingredient). Each entry is a food name
-              ("chopped tomatoes"), or a dict with `substitute_food_id` or
+              parser already returns an empty list on the ingredient). Each entry is a
+              food name ("chopped tomatoes"), or a dict with `substitute_food_id` or
               `substitute_food` (a name) plus an optional `note`, e.g.
               {"substitute_food": "vegan block", "note": "for a dairy-free version"}.
               A note on its own is also allowed. Names are matched case-insensitively
@@ -403,6 +403,8 @@ def mealie_recipes_update_structured_ingredients(
             the unmatched names instead (`unmatched_foods`,
             `unmatched_substitute_foods`), so you can alias them onto existing foods
             (mealie_foods_aliases_add), re-parse, and retry without creating duplicates.
+
+    Substitutions need Mealie 3.26.0 or later.
 
     Returns:
         JSON string with updated recipe details, plus `created_foods` and
@@ -1608,7 +1610,8 @@ def mealie_foods_substitutions_add(food_id: str, substitutions: list[dict | str]
     """Add one or more standing substitutions to a food, keeping the existing ones.
 
     A food's substitutions are the "may be replaced by" options Mealie offers
-    wherever the food is used, e.g. butter -> vegan block.
+    wherever the food is used, e.g. butter -> vegan block. Needs Mealie 3.26.0
+    or later.
 
     Args:
         food_id: The food's ID

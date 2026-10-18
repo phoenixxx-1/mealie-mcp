@@ -513,13 +513,16 @@ class TestStructuredIngredientSubstitutions:
     def test_failed_substitute_create_stops_the_update(self):
         mock = self._client()
         mock.create_food.side_effect = MealieAPIError("conflict", status_code=409)
-        parsed = [{"ingredient": {
-            "food": {"id": "food-cream", "name": "cream"}, "substitutions": ["oat cream"],
-        }}]
+        parsed = [
+            {"ingredient": {"food": {"id": "food-cream", "name": "cream"}, "substitutions": ["oat cream"]}},
+            {"ingredient": {"food": {"id": "food-milk", "name": "milk"}, "substitutions": ["oat milk"]}},
+        ]
         with patch("src.tools.recipes.MealieClient", return_value=mock):
             data = json.loads(recipes_update_structured_ingredients("test-recipe", parsed))
 
         assert data["failed_substitute_foods"] == ["oat cream"]
+        # Stops at the first failure rather than creating the rest
+        mock.create_food.assert_called_once_with("oat cream")
         mock.update_recipe_ingredients.assert_not_called()
 
     def test_warns_when_mealie_saves_no_substitutions(self):

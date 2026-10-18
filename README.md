@@ -140,7 +140,8 @@ set. Use the add/remove tools above for incremental changes.
 
 Substitutions are "may be replaced by" options, such as "passata, or chopped
 tomatoes" or "butter, or vegan block". Mealie keeps them in two places: on a
-single recipe ingredient line, and on a food as a standing default.
+single recipe ingredient line, and on a food as a standing default. This needs
+Mealie 3.26.0 or later.
 
 - `mealie_foods_substitutions_add` - Add one or more standing substitutions to a food, keeping the existing ones
 - `mealie_foods_substitutions_remove` - Remove one or more standing substitutions from a food
