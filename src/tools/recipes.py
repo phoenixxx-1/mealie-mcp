@@ -693,8 +693,9 @@ def recipes_update_structured_ingredients(
     Substitutions:
         Each line may carry a ``substitutions`` list (on the ingredient, or
         beside it on a parser result). Each entry is a food name string, or a
-        dict with ``substitute_food_id`` or ``substitute_food`` (a name) plus
-        an optional ``note``; a note on its own is allowed too. Names are
+        dict with ``substitute_food`` (a name or ``{"id", "name"}``; ``food``
+        also works) or ``substitute_food_id``, plus an optional ``note``; a
+        note on its own is allowed too, and unknown keys are an error. Names are
         matched case-insensitively against existing food names, plural names
         and aliases. Lines without the key are saved with no substitutions,
         since the whole ingredient list is replaced.
