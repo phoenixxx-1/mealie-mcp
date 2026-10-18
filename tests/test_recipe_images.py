@@ -460,9 +460,12 @@ class TestPublishedSchemas:
         return asyncio.run(fetch())[0], server
 
     def test_new_tools_take_base64(self):
+        """image_base64 is one of two optional sources (the other is image_path)."""
         tools, _ = self._tools()
-        assert set(tools["mealie_recipes_image_upload"]["required"]) == {"slug", "image_base64"}
-        assert set(tools["mealie_timeline_image_upload"]["required"]) == {"event_id", "image_base64"}
+        assert tools["mealie_recipes_image_upload"]["required"] == ["slug"]
+        assert tools["mealie_timeline_image_upload"]["required"] == ["event_id"]
+        assert "image_base64" in tools["mealie_recipes_image_upload"]["properties"]
+        assert "image_base64" in tools["mealie_timeline_image_upload"]["properties"]
 
     def test_recipes_update_has_no_image_and_rejects_it(self):
         tools, server = self._tools()

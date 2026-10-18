@@ -10,6 +10,7 @@ import binascii
 import json
 import os
 import re
+import stat
 import time
 from typing import Any, Dict, Optional, Union
 from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
@@ -252,6 +253,117 @@ def decode_image_base64(value: str) -> bytes:
             f"image_base64 is not valid base64 ({e}). Send standard base64, optionally "
             "with a data:image/...;base64, prefix"
         ) from None
+
+
+# Folders image_path may read from, ':'-separated. Mount them into the
+# container read-only at the same path the agent sees.
+IMAGE_DIRS_ENV = "MEALIE_MCP_IMAGE_DIRS"
+_image_dirs_cache: Dict[str, list[str]] = {}
+
+
+def allowed_image_dirs() -> list[str]:
+    """The real paths of the folders in ``MEALIE_MCP_IMAGE_DIRS``.
+
+    Each entry is resolved once with ``os.path.realpath``; entries that
+    don't exist or aren't folders are ignored. An unset or empty variable
+    gives an empty list, which disables image_path.
+    """
+    raw = os.getenv(IMAGE_DIRS_ENV, "")
+    if raw not in _image_dirs_cache:
+        roots = []
+        for entry in raw.split(":"):
+            entry = entry.strip()
+            if not entry:
+                continue
+            real = os.path.realpath(entry)
+            if os.path.isdir(real) and real not in roots:
+                roots.append(real)
+        _image_dirs_cache[raw] = roots
+    return _image_dirs_cache[raw]
+
+
+def read_image_path(path: Any) -> bytes:
+    """Read an image file from one of the allowed folders, read-only.
+
+    Checks, in order: image_path is enabled, the path is absolute, its real
+    path (symlinks followed) is inside an allowed folder, and the file opened
+    from that real path is a regular file of at most ``IMAGE_MAX_BYTES``. The
+    type and size checks use ``fstat`` on the open descriptor, and the file is
+    opened with ``O_NOFOLLOW`` where available, so the file can't be swapped
+    between the checks and the read. At most ``IMAGE_MAX_BYTES + 1`` bytes are
+    read. Nothing at the path is ever written, moved or deleted.
+
+    Raises:
+        ValueError: With a message naming the path (never its contents)
+    """
+    roots = allowed_image_dirs()
+    if not roots:
+        raise ValueError(f"image_path is disabled ({IMAGE_DIRS_ENV} not set)")
+    if not isinstance(path, str) or not path or "\x00" in path or not os.path.isabs(path):
+        raise ValueError(f"image_path must be an absolute path: {path!r}")
+
+    real = os.path.realpath(path)
+    if not any(os.path.commonpath([real, root]) == root for root in roots):
+        raise ValueError(f"image_path is outside allowed folders: {path}")
+
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    try:
+        fd = os.open(real, flags)
+    except FileNotFoundError:
+        raise ValueError(f"image_path not found: {path}") from None
+    except PermissionError:
+        raise ValueError(f"image_path can't be read (permission denied): {path}") from None
+    except OSError as e:
+        # ELOOP: the final component became a symlink after realpath resolved it
+        raise ValueError(f"image_path can't be opened ({e.strerror}): {path}") from None
+
+    try:
+        # Checked on the raw descriptor: Python won't wrap a directory in a file object
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode):
+            raise ValueError(f"image_path is not a regular file: {path}")
+        if info.st_size > IMAGE_MAX_BYTES:
+            raise ValueError(
+                f"image_path is too large ({_format_size(info.st_size)} > {_format_size(IMAGE_MAX_BYTES)}): {path}"
+            )
+        handle = os.fdopen(fd, "rb")
+    except BaseException:
+        os.close(fd)
+        raise
+    with handle:
+        data = handle.read(IMAGE_MAX_BYTES + 1)
+    if len(data) > IMAGE_MAX_BYTES:
+        raise ValueError(f"image_path is too large (over {_format_size(IMAGE_MAX_BYTES)}): {path}")
+    return data
+
+
+def load_image(image_base64: Optional[str] = None, image_path: Optional[str] = None) -> tuple[bytes, str]:
+    """Get image bytes from exactly one of base64 or an allowed file path.
+
+    Returns ``(data, source)`` with source ``"base64"`` or ``"path"``. The
+    bytes are checked with ``validate_image_bytes`` (format from magic bytes,
+    never the file extension) before they're returned.
+
+    Raises:
+        ValueError: If neither or both are given, or the image is unusable
+    """
+    given_base64 = image_base64 is not None and image_base64 != ""
+    given_path = image_path is not None and image_path != ""
+    if given_base64 == given_path:
+        raise ValueError(
+            "Give exactly one of image_path or image_base64"
+            + (" (both were given)" if given_base64 else " (neither was given)")
+        )
+    if given_path:
+        data, source = read_image_path(image_path), "path"
+        try:
+            validate_image_bytes(data)
+        except ValueError as e:
+            raise ValueError(f"image_path is an unsupported format: {image_path}. {e}") from None
+    else:
+        data, source = decode_image_base64(image_base64), "base64"
+        validate_image_bytes(data)
+    return data, source
 
 
 _TELEGRAM_BOT_TOKEN = re.compile(r"bot\d+(?::|%3A)[A-Za-z0-9_-]+", re.IGNORECASE)
